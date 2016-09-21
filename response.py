@@ -9,4 +9,3 @@ class Response:
 
     def __repr__(self):
         return '{}: {}'.format(self.code, self.message)
-BLABLA
