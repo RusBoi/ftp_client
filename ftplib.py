@@ -1,6 +1,5 @@
 import socket
 import re
-import getpass
 import time
 from response import Response
 from enum import Enum
@@ -48,13 +47,15 @@ class FTP:
 
     def close_connection(self):
         """
-        Разрыв соединений
+        Close connection with the server
         """
+        # self.run_command('QUIT')  # если тайм аут то команду нет сымсла слать
         self.command_socket.close()
 
     def read_line(self):
         """
-        Считывает строку с командного сокета
+        Read bytes from the command socket.
+        :return: utf-8 string
         """
         line = b''
         while True:
@@ -66,9 +67,10 @@ class FTP:
 
     def get_response(self):
         """
-        Проверяет сокет на наличие ответа от сервера. Если ответ есть то возвращает его, в противном случае
-        вызыват исключение NoResponse
+        Try to get response from the server. If there is no response raise NoResponse exception.
+        :return: response from the server
         """
+
         lines = []
         regex = re.compile(r'^(?P<code>\d+?)(?P<delimeter> |-)(?P<message>.+)$')
         while True:
@@ -86,7 +88,9 @@ class FTP:
 
     def send_command(self, command, args):
         """
-        Посылает команду серверу и выводит команду в терминал, если установлен режим debug
+        Send command to the server. Print command to the console if debug flag is on.
+        :param command: command which will be sent to the server
+        :param args: positional arguments
         """
         if args:
             command_string = '{} {}'.format(command, ' '.join(args))
@@ -101,9 +105,13 @@ class FTP:
 
     def run_command(self, command, *args):
         """
-        Функция выполняет указанную команду, выводит результат
-        и возвращает Response. Если был получен неверный код ответа, то вызвается исключение WrongResponse
+        Send command to the server and get response. If response is bad than WrongResponse exception
+        will be raised. If there is no exception than print the response to the console.
+        :param command: command which will be sent to the server
+        :param args: positional arguments
+        :return: response from the server
         """
+
         if command:
             self.send_command(command, args)
         result = self.get_response()
@@ -114,9 +122,10 @@ class FTP:
 
     def open_data_connection(self):
         """
-        Открывает соединение для передачи данных в пассивном или активном режиме
-        (зависит от флага passive_state)
+        Open connection to retrieve and send data to the server.
+        Connection can be open in two modes: passive and active (depending on "passive_state" flag)
         """
+
         self.data_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.data_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.data_socket.settimeout(10)
@@ -136,9 +145,9 @@ class FTP:
 
     def read_data(self):
         """
-        Возвращает данные (байты) с соединения данных
+        Get data from data connection socket
+        :return: bytes of data
         """
-
         data = b''
         if self.passive_state:
             while True:
@@ -164,6 +173,10 @@ class FTP:
         return data
 
     def send_data(self, data):
+        """
+        Send data via data connection socket
+        :param data: data (bytes) to send
+        """
         if self.passive_state:
             self.data_socket.send(data)
         else:
@@ -174,7 +187,9 @@ class FTP:
 
     def download_file(self, file_name):
         """
-        Скачать файл с сервера и вернуть его содержимое
+        Download file from the server
+        :param file_name: name of the file
+        :return bytes of data
         """
 
         self.run_command('TYPE', 'I')
@@ -194,44 +209,36 @@ class FTP:
         print(info_string)
         return data
 
+    def download_directory(self, directory_name):
+        """
+        Download recursively whole directory from the server
+        :param directory_name: directory's name
+        :return: list of tuples containing filename and it's data
+        """
+        pass
+
     def upload_file(self, file_name, data):
-        # commands = [
-        #     self.run_command,
-        #     self.open_data_connection,
-        #     self.run_command
-        # ]
-        # args = [
-        #     ['TYPE', 'I'],
-        #     [],
-        #     ['STOR', file_name]
-        # ]
-        # if self.data_type == DataType.Binary:
-        #     commands.pop(0)
-        #     args.pop(0)
-        # else:
-        #     self.data_type = DataType.Binary
-        #
-        # for i in range(len(commands)):
-        #     res = commands[i](*args[i])
-        #     try:
-        #         res = res.done
-        #     except:
-        #         pass
-        #     if not res:
-        #         return
-        # self.send_data(data.encode())
-        # print(self.get_response())
+        """
+        Upload a file on the server
+        :param file_name: name of the file
+        :param data: file's content (bytes)
+        """
 
         self.run_command('TYPE', 'I')
         self.open_data_connection()
         self.run_command('STOR', file_name)
-        self.send_data(data.encode())
-        self.run_command('')  # выполняю пустую команду, чтобы просто получить ответ с сокета (он там должен быть)
+        self.send_data(data)
+        self.run_command('')
 
-    def login(self, user):
+    def login(self, user, passwd):
+        """
+        Sign in to the server
+
+        :param user: username
+        :param passwd: password
+        """
         self.run_command('USER', user)
-        password = getpass.getpass('Enter password: ')
-        self.run_command('PASS', password)
+        self.run_command('PASS', passwd)
 
     def get_location(self):
         self.run_command('PWD')
