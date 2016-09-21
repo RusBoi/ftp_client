@@ -112,11 +112,11 @@ class FTPClient:
     # Не доделано
     def download_directory(self, directory_name):
         return
-        all_data = self.ftp.download_directory(directory_name)
-        # Папка может быть пустой
-        for data in all_data:
-            with open(data[0], 'wb') as file:
-                file.write(data)
+        # all_data = self.ftp.download_directory(directory_name)
+        # # Папка может быть пустой
+        # for data in all_data:
+        #     with open(data[0], 'wb') as file:
+        #         file.write(data)
 
     def download_file(self, file_name):
         data = self.ftp.download_file(file_name)
