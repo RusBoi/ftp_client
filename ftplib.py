@@ -2,11 +2,9 @@ import socket
 import re
 import time
 from response import Response
-from enum import Enum
 
-
-BUFFER_SIZE = 1024 * 8  # 8KB
-PORT = 60666
+BUFFER_SIZE = 1024 ** 3  # 1GB
+TIMEOUT = 10.0
 
 
 class Error(Exception):
@@ -18,38 +16,21 @@ class WrongResponse(Error):
         self.response = response
 
 
-class NoResponse(Error):
-    pass
-
-
-class Color:
-    green = '\033[92m'
-    red = '\033[91m'
-    end_color = '\033[0m'
-
-
-class DataType(Enum):
-    Null = 0,
-    Binary = 1,
-    ASCII = 2
-
-
 class FTP:
-    def __init__(self, host, port=21):
+    def __init__(self, host, port, printout=print):
         self.command_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.command_socket.settimeout(10.0)
+        self.printout = printout
+        self.passive_state = True
+        self.debug = False
+
+        self.command_socket.settimeout(TIMEOUT)
         self.command_socket.connect((host, port))
         self.run_command('')
-
-        self.passive_state = True
-        self.debug = True
-        self.data_type = DataType.Null
 
     def close_connection(self):
         """
         Close connection with the server
         """
-        # self.run_command('QUIT')  # если тайм аут то команду нет сымсла слать
         self.command_socket.close()
 
     def read_line(self):
@@ -57,27 +38,24 @@ class FTP:
         Read bytes from the command socket.
         :return: utf-8 string
         """
-        line = b''
+        res = bytearray()
         while True:
             byte = self.command_socket.recv(1)
-            if byte == b'\n' or byte == b'':
+            if byte in (b'\n', b''):
                 break
-            line += byte
-        return line[:-1].decode()
+            res += byte
+        return res[:-1].decode()
 
     def get_response(self):
         """
-        Try to get response from the server. If there is no response raise NoResponse exception.
+        Try to get response from the server.
         :return: response from the server
         """
 
         lines = []
         regex = re.compile(r'^(?P<code>\d+?)(?P<delimeter> |-)(?P<message>.+)$')
         while True:
-            try:
-                line = self.read_line()
-            except:
-                raise NoResponse
+            line = self.read_line()
             match = regex.fullmatch(line)
             if match is None:
                 lines.append(line)
@@ -98,9 +76,9 @@ class FTP:
             command_string = command
         if self.debug:
             if command == 'PASS':
-                print('>>', 'PASS XXXX')
+                self.printout('>>', 'PASS XXXX')
             else:
-                print('>>', command_string)
+                self.printout('>>', command_string)
         self.command_socket.sendall((command_string + '\r\n').encode('utf-8'))
 
     def run_command(self, command, *args):
@@ -117,7 +95,7 @@ class FTP:
         result = self.get_response()
         if not result.done:
             raise WrongResponse(result)
-        print(Color.green + '<< ' + str(result) + Color.end_color)
+        self.printout('<<', result)
         return result
 
     def open_data_connection(self):
@@ -128,7 +106,7 @@ class FTP:
 
         self.data_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.data_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.data_socket.settimeout(10)
+        self.data_socket.settimeout(TIMEOUT)
 
         if self.passive_state:
             regex = re.compile(r'\((\d+,\d+,\d+,\d+),(\d+),(\d+)\)')
@@ -139,38 +117,49 @@ class FTP:
             port = 256 * int(match.group(2)) + int(match.group(3))
             self.data_socket.connect((ip, port))
         else:
-            res = self.run_command('PORT', '192,168,1,40,{},{}'.format(PORT // 256, PORT % 256))
-            self.data_socket.bind(('', PORT))
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("google.com", 80))
+            func = lambda x: ',' if x == '.' else x
+            local_ip = ''.join(map(func, s.getsockname()[0]))
+            local_port = int(s.getsockname()[1])
+
+            self.run_command('PORT', '{},{},{}'.format(local_ip, local_port // 256, local_port % 256))
+            self.data_socket.bind(('', local_port))
             self.data_socket.listen(100)
 
-    def read_data(self):
+    def read_data(self, bytes_count=BUFFER_SIZE, debug=False):
         """
         Get data from data connection socket
+        :param bytes_count: if you know how much you need to read from data socket then you can specify it
+        :param debug: if file is downloading the info will be printing
         :return: bytes of data
         """
-        data = b''
+        res = bytearray()
+        length = 0
         if self.passive_state:
             while True:
-                try:
-                    chunk = self.data_socket.recv(BUFFER_SIZE)
-                except:
-                    raise NoResponse
+                chunk = self.data_socket.recv(bytes_count)
+                length += len(chunk)
+                res += chunk
                 if not chunk:
                     break
-                data += chunk
+                if debug:
+                    pers = round(length / self._size * 100, 2)
+                    self.printout('{}%\r'.format(pers), end='')
         else:
-            conn, addr = self.data_socket.accept()
+            conn = self.data_socket.accept()[0]
             while True:
-                try:
-                    chunk = conn.recv(BUFFER_SIZE)
-                except:
-                    raise NoResponse
+                chunk = conn.recv(bytes_count)
+                length += len(chunk)
+                res += chunk
                 if not chunk:
                     break
-                data += chunk
+                if debug:
+                    pers = round(length / self._size * 100, 2)
+                    self.printout('{}%\r'.format(pers), end='')
             conn.close()
         self.data_socket.close()
-        return data
+        return res
 
     def send_data(self, data):
         """
@@ -178,10 +167,10 @@ class FTP:
         :param data: data (bytes) to send
         """
         if self.passive_state:
-            self.data_socket.send(data)
+            self.data_socket.sendall(data)
         else:
             conn, (addr, port) = self.data_socket.accept()
-            conn.send(data)
+            conn.sendall(data)
             conn.close()
         self.data_socket.close()
 
@@ -191,13 +180,21 @@ class FTP:
         :param file_name: name of the file
         :return bytes of data
         """
+        try:
+            resp = self.run_command('SIZE', file_name)
+            self._size = int(resp.message)
+        except:
+            self._size = None
 
         self.run_command('TYPE', 'I')
         self.open_data_connection()
-        resp = self.run_command('RETR', file_name)
+        self.run_command('RETR', file_name)
 
         start = time.time()
-        data = self.read_data()
+        if self._size:
+            data = self.read_data(debug=True)
+        else:
+            data = self.read_data(debug=False)
         self.run_command('')
 
         time_value = time.time() - start
@@ -206,7 +203,7 @@ class FTP:
         info_string = '{} bytes received in {} secs ({} MB/s)'.format(bytes_count,
                                                                       round(time_value, 2),
                                                                       speed)
-        print(info_string)
+        self.printout(info_string)
         return data
 
     def download_directory(self, directory_name):
@@ -263,14 +260,14 @@ class FTP:
         self.open_data_connection()
         self.run_command('LIST', path)
         data = self.read_data().decode(encoding='utf-8')
-        print(data)
+        self.printout(data)
         self.run_command('')
 
     def get_filenames(self, path=''):
         self.open_data_connection()
         self.run_command('NLST', path)
         data = self.read_data().decode(encoding='utf-8')
-        print(data)
+        self.printout(data)
         self.run_command('')
 
     def get_size(self, file_name):
