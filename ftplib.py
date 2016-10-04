@@ -44,7 +44,7 @@ class FTP:
             if byte in (b'\n', b''):
                 break
             res += byte
-        return res[:-1].decode()
+        return res[:-1].decode(errors='skip')
 
     def get_response(self):
         """
@@ -134,6 +134,7 @@ class FTP:
         :param debug: if file is downloading the info will be printing
         :return: bytes of data
         """
+
         res = bytearray()
         length = 0
         if self.passive_state:
@@ -174,21 +175,21 @@ class FTP:
             conn.close()
         self.data_socket.close()
 
-    def download_file(self, file_name):
+    def download_file(self, file_path):
         """
         Download file from the server
-        :param file_name: name of the file
+        :param file_path: name of the file
         :return bytes of data
         """
         try:
-            resp = self.run_command('SIZE', file_name)
+            resp = self.run_command('SIZE', file_path)
             self._size = int(resp.message)
         except:
             self._size = None
 
         self.run_command('TYPE', 'I')
         self.open_data_connection()
-        self.run_command('RETR', file_name)
+        self.run_command('RETR', file_path)
 
         start = time.time()
         if self._size:
@@ -214,16 +215,16 @@ class FTP:
         """
         pass
 
-    def upload_file(self, file_name, data):
+    def upload_file(self, file_path, data):
         """
         Upload a file on the server
-        :param file_name: name of the file
+        :param file_path: name of the file
         :param data: file's content (bytes)
         """
 
         self.run_command('TYPE', 'I')
         self.open_data_connection()
-        self.run_command('STOR', file_name)
+        self.run_command('STOR', file_path)
         self.send_data(data)
         self.run_command('')
 
@@ -259,7 +260,7 @@ class FTP:
     def get_files(self, path=''):
         self.open_data_connection()
         self.run_command('LIST', path)
-        data = self.read_data().decode(encoding='utf-8')
+        data = self.read_data().decode(encoding='utf-8', errors='skip')
         self.printout(data)
         self.run_command('')
 

@@ -1,25 +1,21 @@
-import ftplib
-from enum import Enum
 import argparse
+import ftplib
 import getpass
-import sys
 try:
     import readline
 except:
     pass
+import os.path
+import sys
+
 from socket import timeout
-import traceback
+from enum import Enum
+
 
 DEFAULT_USERNAME = 'ftp'
 DEFAULT_PASS = 'example@email.com'
 DEFAULT_PORT = 21
 TIMEOUT_CODE = 421
-
-
-class Color(Enum):
-    green = '\033[92m'
-    red = '\033[91m'
-    end_color = '\033[0m'
 
 
 class FTPClient:
@@ -42,7 +38,6 @@ class FTPClient:
             raise SystemExit
         except:
             self.eprint(sys.exc_info()[1])
-            # traceback.print_exc()
             raise SystemExit
 
         try:
@@ -106,8 +101,7 @@ class FTPClient:
                     except timeout:
                         print('Time out. Use "exit".')
                     except:
-                        # self.eprint(sys.exc_info()[1])
-                        traceback.print_exc()
+                        self.eprint(sys.exc_info()[1])
 
     def download_handler(self, args):
         """
@@ -120,20 +114,13 @@ class FTPClient:
         if not args or (args[0] == '-r' and len(args) == 1):
             raise ValueError
         if args[0] == '-r':
-            self.download_directory(args[1])
+            pass
         else:
             self.download_file(args[0])
 
-    def download_directory(self, directory_name):
-        return
-        # all_data = self.ftp.download_directory(directory_name)
-        # # Папка может быть пустой
-        # for data in all_data:
-        #     with open(data[0], 'wb') as file:
-        #         file.write(data)
-
-    def download_file(self, file_name):
-        data = self.ftp.download_file(file_name)
+    def download_file(self, file_path):
+        file_name = os.path.split(file_path)[-1]
+        data = self.ftp.download_file(file_path)
         try:
             with open(file_name, 'wb') as file:
                 file.write(data)
@@ -142,8 +129,8 @@ class FTPClient:
 
     def upload_handler(self, args):
         """
-        usage: put [-r] <path>
-        Send file to the server
+        usage: put [-r] <path1> [<path2>]
+        Send file which is located in 'path1' to the server's 'path2'
         optional arguments:
         -r\t\tSend whole directory to the server
         """
@@ -151,27 +138,31 @@ class FTPClient:
         if not args or (args[0] == '-r' and len(args) == 1):
             raise ValueError
         if args[0] == '-r':
-            self.upload_directory(args[1])
+            pass
         else:
-            self.upload_file(args[0])
+            self.upload_file(*args[:2])
 
-    def upload_directory(self, directory_name):
-        pass
+    def upload_file(self, path1, path2=None):
+        file_name = os.path.split(path1)[-1]
+        if path2:
+            dest_path = os.path.normpath('{}/{}'.format(path2, file_name))
+        else:
+            dest_path = file_name
 
-    def upload_file(self, file_name):
         try:
-            with open(file_name, 'rb') as file:
+            with open(path1, 'rb') as file:
                 data = file.read()
         except:
             self.eprint(sys.exc_info()[1])
         else:
-            self.ftp.upload_file(file_name, data)
+            self.ftp.upload_file(dest_path, data)
 
     def user_handler(self, args):
         """
         usage: user <username>
         Send new user information
         """
+
         if not args:
             raise ValueError
         username = args[0]
@@ -311,19 +302,6 @@ class FTPClient:
 
     def eprint(self, *args, **kwargs):
         print(*args, file=sys.stderr, **kwargs)
-    #
-    # def print_response(self, response, error=False):
-    #     """
-    #     Printing response from the server
-    #     :param response: response from the server
-    #     :param error: bad response or not
-    #     """
-    #     if not sys.platform.startswith('linux'):
-    #         print(response)
-    #     else:
-    #         color = Color.red if error else Color.green
-    #         s = '{}<< {}{}'.format(color.value, str(response), Color.end_color.value)
-    #         print(s)
 
 
 if __name__ == '__main__':
