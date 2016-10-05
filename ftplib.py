@@ -1,9 +1,11 @@
 import socket
 import re
-import time
+
 from response import Response
 
-BUFFER_SIZE = 1024 ** 3  # 1GB
+
+BUFFER_SIZE = 1024 ** 2 * 20  # 20MB
+MAX_SIZE = (1024 ** 3)  # 1GB
 TIMEOUT = 10.0
 
 
@@ -22,6 +24,11 @@ class FTP:
         self.printout = printout
         self.passive_state = True
         self.debug = False
+
+        self.downloading_in_process = True
+        self._new_download = True
+        self._size = None
+        self._current_size = None
 
         self.command_socket.settimeout(TIMEOUT)
         self.command_socket.connect((host, port))
@@ -140,26 +147,27 @@ class FTP:
         if self.passive_state:
             while True:
                 chunk = self.data_socket.recv(bytes_count)
-                length += len(chunk)
                 res += chunk
-                if not chunk:
+                if not chunk or length >= MAX_SIZE:
                     break
                 if debug:
-                    pers = round(length / self._size * 100, 2)
+                    length += len(chunk)
+                    self._current_size += len(chunk)
+                    pers = round(self._current_size / self._size * 100, 2)
                     self.printout('{}%\r'.format(pers), end='')
         else:
             conn = self.data_socket.accept()[0]
             while True:
                 chunk = conn.recv(bytes_count)
-                length += len(chunk)
                 res += chunk
-                if not chunk:
+                if not chunk or length >= MAX_SIZE:
                     break
                 if debug:
-                    pers = round(length / self._size * 100, 2)
+                    length += len(chunk)
+                    self._current_size += len(chunk)
+                    pers = round(self._current_size / self._size * 100, 2)
                     self.printout('{}%\r'.format(pers), end='')
             conn.close()
-        self.data_socket.close()
         return res
 
     def send_data(self, data):
@@ -181,30 +189,29 @@ class FTP:
         :param file_path: name of the file
         :return bytes of data
         """
-        try:
-            resp = self.run_command('SIZE', file_path)
-            self._size = int(resp.message)
-        except:
-            self._size = None
 
-        self.run_command('TYPE', 'I')
-        self.open_data_connection()
-        self.run_command('RETR', file_path)
+        if self._new_download:
+            # Новая закачка файла
+            self.run_command('TYPE', 'I')
+            self.open_data_connection()
+            self.run_command('RETR', file_path)
+            self._new_download = False
+            self._current_size = 0
 
-        start = time.time()
         if self._size:
             data = self.read_data(debug=True)
         else:
             data = self.read_data(debug=False)
-        self.run_command('')
 
-        time_value = time.time() - start
-        bytes_count = len(data)
-        speed = round(bytes_count / (1024 ** 2) / time_value, 4)
-        info_string = '{} bytes received in {} secs ({} MB/s)'.format(bytes_count,
-                                                                      round(time_value, 2),
-                                                                      speed)
-        self.printout(info_string)
+        if len(data) == 0:
+            # скачивание закончилось
+            self.downloading_in_process = False
+            self._new_download = True
+            self.data_socket.close()
+            self.run_command('')
+            self.run_command('')
+        else:
+            self.send_command('NOOP', [])
         return data
 
     def download_directory(self, directory_name):
@@ -267,7 +274,7 @@ class FTP:
     def get_filenames(self, path=''):
         self.open_data_connection()
         self.run_command('NLST', path)
-        data = self.read_data().decode(encoding='utf-8')
+        data = self.read_data().decode(encoding='utf-8', errors='skip')
         self.printout(data)
         self.run_command('')
 

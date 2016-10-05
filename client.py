@@ -7,9 +7,10 @@ except:
     pass
 import os.path
 import sys
+import time
+import traceback
 
 from socket import timeout
-from enum import Enum
 
 
 DEFAULT_USERNAME = 'ftp'
@@ -99,14 +100,16 @@ class FTPClient:
                         print()
                         pass
                     except timeout:
+                        traceback.print_exc()
                         print('Time out. Use "exit".')
                     except:
+                        traceback.print_exc()
                         self.eprint(sys.exc_info()[1])
 
     def download_handler(self, args):
         """
         usage: get [-r] <path>
-        Receive file from the server
+        Receive file from the server. If a file already exists then it will be overwritten
         optional arguments:
         -r\t\tReceive whole directory from the server
         """
@@ -120,12 +123,37 @@ class FTPClient:
 
     def download_file(self, file_path):
         file_name = os.path.split(file_path)[-1]
-        data = self.ftp.download_file(file_path)
+
+        if os.path.isfile('./' + file_name):
+            os.remove(file_name)
+
+        bytes_count = 0
+        time_value = 0
+        self.ftp.downloading_in_process = True
+                                                                                                                                                                            
         try:
-            with open(file_name, 'wb') as file:
-                file.write(data)
+            resp = self.ftp.run_command('SIZE', file_path)
+            size = int(resp.message)
         except:
-            self.eprint(sys.exc_info()[1])
+            size = None
+        self.ftp._size = size
+
+        while self.ftp.downloading_in_process:
+            start = time.time()
+            data = self.ftp.download_file(file_path)
+            time_value += time.time() - start
+            bytes_count += len(data)
+            try:
+                with open(file_name, 'ab') as file:
+                    file.write(data)
+            except:
+                self.eprint(sys.exc_info()[1])
+                return
+        speed = round(bytes_count / (1024 ** 2) / time_value, 4)
+        info_string = '{} bytes received in {} secs ({} MB/s)'.format(bytes_count,
+                                                                      round(time_value, 2),
+                                                                      speed)
+        print(info_string)
 
     def upload_handler(self, args):
         """
@@ -301,6 +329,12 @@ class FTPClient:
         raise SystemExit
 
     def eprint(self, *args, **kwargs):
+        """
+        Printing to the sys.stderr
+        :param args: some args
+        :param kwargs: some args
+        """
+
         print(*args, file=sys.stderr, **kwargs)
 
 
