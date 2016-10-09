@@ -1,11 +1,11 @@
 import argparse
 import ftplib
 import getpass
+import os.path
 try:
     import readline
 except:
     pass
-import os.path
 import sys
 import time
 import traceback
@@ -22,60 +22,6 @@ DOWNLOAD_DEFAULT_PATH = '~/Downloads/'
 
 class FTPClient:
     def __init__(self):
-        parser = argparse.ArgumentParser(description="""ftp client server""")
-        parser.add_argument('host', help='host to connect to')
-        parser.add_argument('--port', '-p', type=int, help='port to connect to', default=DEFAULT_PORT)
-        parser.add_argument('--user', '-u', help='username to login', default=DEFAULT_USERNAME)
-        parser.add_argument('--passwd', help='password to login')
-        parser.add_argument('--debug', help='debug mode', action="store_true")
-        subparsers = parser.add_subparsers(title='commands to execute')
-
-        parser_put = subparsers.add_parser('put', aliases=['upload'], help='upload file to the server')
-        parser_put.add_argument('path1', help='path where file located on local machine')
-        parser_put.add_argument('path2', help='path where file will be uploaded on the server')
-        parser_put.set_defaults(func=self.upload_handler)
-
-        parser_get = subparsers.add_parser('get', aliases=['download'], help='download file from the server')
-        parser_get.add_argument('path1', help='path where file located on the server')
-        parser_get.add_argument('path2', nargs='?', default=DOWNLOAD_DEFAULT_PATH, help='path where file will be stored on local machine')
-        parser_get.set_defaults(func=self.download_handler)
-
-        parser_ls = subparsers.add_parser('ls', help='show content of remote directory')
-        parser_ls.add_argument('path', help='path of the remote directory')
-        parser_ls.set_defaults(func=self.ls_handler)
-
-        args = parser.parse_args()
-
-        try:
-            host = args.host or input('Enter host name: ')
-            self.ftp = ftplib.FTP(host, args.port, printout=print,
-                                  print_output=args.debug, print_input=not hasattr(args, 'func'))
-        except KeyboardInterrupt:
-            print()
-            raise SystemExit
-        except:
-            self.eprint(sys.exc_info()[1])
-            raise SystemExit
-
-        try:
-            if args.user != DEFAULT_USERNAME and not args.passwd:
-                # пользователь ввел свой логин, но хочет ввести пароль скрытно
-                self.user_handler([args.user])
-            else:
-                password = args.passwd or DEFAULT_PASS
-                self.user_handler([args.user, password])
-        except ftplib.WrongResponse as e:
-            print('<<', e.response)
-        except:
-            self.eprint(sys.exc_info()[1])
-
-        if hasattr(args, 'func'):
-            if args.func == self.ls_handler:
-                self.ls_handler([args.path])
-            else:
-                args.func([args.path1, args.path2])
-            raise SystemExit
-
         self.handlers = {
             'get': self.download_handler,
             'put': self.upload_handler,
@@ -94,6 +40,55 @@ class FTPClient:
             None: self.unknown_command_handler
         }
 
+        parser = argparse.ArgumentParser(description="""ftp client server""")
+        parser.add_argument('host', help='host to connect to')
+        parser.add_argument('--port', '-p', type=int, help='port to connect to', default=DEFAULT_PORT)
+        parser.add_argument('--user', '-u', help='username to login', default=DEFAULT_USERNAME)
+        parser.add_argument('--passwd', help='password to login')
+        parser.add_argument('--debug', help='debug mode', action="store_true")
+        subparsers = parser.add_subparsers(title='commands to execute')
+
+        parser_put = subparsers.add_parser('put', aliases=['upload'], help='upload file to the server')
+        parser_put.add_argument('path1', help='path where file located on local machine')
+        parser_put.add_argument('path2', help='path where file will be uploaded on the server')
+        parser_put.set_defaults(func='put')
+
+        parser_get = subparsers.add_parser('get', aliases=['download'], help='download file from the server')
+        parser_get.add_argument('path1', help='path where file located on the server')
+        parser_get.add_argument('path2', nargs='?', default=DOWNLOAD_DEFAULT_PATH, help='path where file will be stored on local machine')
+        parser_get.set_defaults(func='get')
+
+        parser_ls = subparsers.add_parser('ls', help='show content of remote directory')
+        parser_ls.add_argument('path', help='path of the remote directory')
+        parser_ls.set_defaults(func='ls')
+
+        args = parser.parse_args()
+
+        try:
+            host = args.host or input('Enter host name: ')
+            self.ftp = ftplib.FTP(host, args.port, printout=print,
+                                  print_output=args.debug, print_input=not hasattr(args, 'func'))
+        except KeyboardInterrupt:
+            print()
+            raise SystemExit
+        except:
+            self.eprint(sys.exc_info()[1])
+            raise SystemExit
+
+        if args.user != DEFAULT_USERNAME and not args.passwd:
+            self.run_command('user', [args.user])
+        else:
+            password = args.passwd or DEFAULT_PASS
+            self.run_command('user', [args.user, password])
+
+        if hasattr(args, 'func'):
+            if args.func == 'ls':
+                a = [args.path]
+            else:
+                a = [args.path1, args.path2]
+            self.run_command(args.func, a)
+            raise SystemExit
+
     def run(self):
         """
         Главный цикл
@@ -105,24 +100,26 @@ class FTPClient:
                 print()
                 self.exit_handler([])
             else:
-                if command not in self.handlers:
-                    command = None
-                try:
-                    self.handlers[command](args)
-                except ftplib.WrongResponse as e:
-                    print('<<', e.response)
-                    if e.response.code == TIMEOUT_CODE:
-                        # Если timeout то соединение восстановить не удастся и поэтому закроем клиент
-                        self.exit_handler([])
-                except ValueError:
-                    self.eprint('Wrong arguments. Use "help <command>"')
-                except KeyboardInterrupt:
-                    print()
-                    pass
-                except timeout:
-                    traceback.print_exc()
-                    print('Time out. Exiting program...')
-                    self.exit_handler([])
+                self.run_command(command, args)
+
+    def run_command(self, command, args):
+        if command not in self.handlers:
+            command = None
+        try:
+            self.handlers[command](args)
+        except ftplib.WrongResponse as e:
+            print('<<', e.response)
+            if e.response.code == TIMEOUT_CODE:
+                # Если timeout то соединение восстановить не удастся и поэтому закроем клиент
+                self.exit_handler([])
+        except ValueError:
+            self.eprint('Wrong arguments. Use "help <command>"')
+        except KeyboardInterrupt:
+            print()
+            pass
+        except timeout:
+            print('Time out. Exiting program...')
+            self.exit_handler([])
 
     def download_handler(self, args):
         """
