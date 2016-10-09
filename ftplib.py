@@ -208,10 +208,6 @@ class FTP:
             self.downloading_in_process = False
             self._new_download = True
             self.data_socket.close()
-            self.run_command('')
-            self.run_command('')
-        else:
-            self.send_command('NOOP', [])
         return data
 
     def download_directory(self, directory_name):
