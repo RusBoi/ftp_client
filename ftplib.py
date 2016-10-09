@@ -6,7 +6,7 @@ from response import Response
 
 BUFFER_SIZE = 1024 ** 2 * 20  # 20MB
 MAX_SIZE = (1024 ** 3)  # 1GB
-TIMEOUT = 10.0
+TIMEOUT = 60.0
 
 
 class Error(Exception):
@@ -19,14 +19,13 @@ class WrongResponse(Error):
 
 
 class FTP:
-    def __init__(self, host, port, printout=print):
+    def __init__(self, host, port, printout=print, print_input=True, print_output=False):
         self.command_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.printout = printout
         self.passive_state = True
-        self.debug = False
+        self.print_output = print_output
+        self.print_input = print_input
 
-        self.downloading_in_process = True
-        self._new_download = True
         self._size = None
         self._current_size = None
 
@@ -81,7 +80,7 @@ class FTP:
             command_string = '{} {}'.format(command, ' '.join(args))
         else:
             command_string = command
-        if self.debug:
+        if self.print_output:
             if command == 'PASS':
                 self.printout('>>', 'PASS XXXX')
             else:
@@ -102,7 +101,8 @@ class FTP:
         result = self.get_response()
         if not result.done:
             raise WrongResponse(result)
-        self.printout('<<', result)
+        if self.print_input:
+            self.printout('<<', result)
         return result
 
     def open_data_connection(self):
@@ -190,25 +190,28 @@ class FTP:
         :return bytes of data
         """
 
-        if self._new_download:
-            # Новая закачка файла
-            self.run_command('TYPE', 'I')
-            self.open_data_connection()
-            self.run_command('RETR', file_path)
-            self._new_download = False
-            self._current_size = 0
+        try:
+            resp = self.run_command('SIZE', file_path)
+            self._size = int(resp.message)
+        except:
+            self._size = None
+        self._current_size = 0
 
-        if self._size:
-            data = self.read_data(debug=True)
-        else:
-            data = self.read_data(debug=False)
+        self.run_command('TYPE', 'I')
+        self.open_data_connection()
+        self.run_command('RETR', file_path)
 
-        if len(data) == 0:
-            # скачивание закончилось
-            self.downloading_in_process = False
-            self._new_download = True
-            self.data_socket.close()
-        return data
+        while True:
+            if self._size:
+                data = self.read_data(debug=True)
+            else:
+                data = self.read_data(debug=False)
+            if len(data) == 0:
+                self.data_socket.close()
+                self.run_command('')
+                break
+            else:
+                yield data
 
     def download_directory(self, directory_name):
         """
