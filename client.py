@@ -12,7 +12,6 @@ import traceback
 
 from socket import timeout
 
-
 DEFAULT_USERNAME = 'ftp'
 DEFAULT_PASS = 'example@email.com'
 DEFAULT_PORT = 21
@@ -50,10 +49,11 @@ class FTPClient:
 
         parser_put = subparsers.add_parser('put', aliases=['upload'], help='upload file to the server')
         parser_put.add_argument('path1', help='path where file located on local machine')
-        parser_put.add_argument('path2', help='path where file will be uploaded on the server')
+        parser_put.add_argument('path2', nargs='?', default='.', help='path where file will be uploaded on the server')
         parser_put.set_defaults(func='put')
 
         parser_get = subparsers.add_parser('get', aliases=['download'], help='download file from the server')
+        parser_get.add_argument('-r', action='store_true', help='download directory')
         parser_get.add_argument('path1', help='path where file located on the server')
         parser_get.add_argument('path2', nargs='?', default=DOWNLOAD_DEFAULT_PATH, help='path where file will be stored on local machine')
         parser_get.set_defaults(func='get')
@@ -85,13 +85,16 @@ class FTPClient:
             if args.func == 'ls':
                 a = [args.path]
             else:
-                a = [args.path1, args.path2]
+                if args.r:
+                    a = ['-r', args.path1, args.path2]
+                else:
+                    a = [args.path1, args.path2]
             self.run_command(args.func, a)
             raise SystemExit
 
     def run(self):
         """
-        Главный цикл
+        Main cycle
         """
         while True:
             try:
@@ -103,6 +106,11 @@ class FTPClient:
                 self.run_command(command, args)
 
     def run_command(self, command, args):
+        """
+        Sending(running) command to the server with handling exceptions
+        :param command: command to run
+        :param args: arguments
+        """
         if command not in self.handlers:
             command = None
         try:
@@ -120,6 +128,9 @@ class FTPClient:
         except timeout:
             print('Time out. Exiting program...')
             self.exit_handler([])
+        except ConnectionError:
+            print(sys.exc_info()[1])
+            self.exit_handler([])
 
     def download_handler(self, args):
         """
@@ -134,17 +145,41 @@ class FTPClient:
         if not args or (args[0] == '-r' and len(args) == 1):
             raise ValueError
         if args[0] == '-r':
-            pass
+            path1 = args[1].rstrip('/') or '/'
+            dirname = 'ftp-server' if path1 == '/' else os.path.split(path1)[-1]
+
+            if len(args) > 2:
+                path2 = os.path.expanduser(args[2])
+            else:
+                path2 = os.path.expanduser(DOWNLOAD_DEFAULT_PATH)
+            if not os.path.isdir(path2):
+                self.eprint('"{}" is not a directory'.format(path2))
+                raise ValueError
+            path2 = path2.rstrip('/') + '/' + dirname
+            try:
+                os.mkdir(path2)
+            except FileExistsError as e:
+                print(e)
+                return
+
+            old_in, old_out = self.ftp.print_input, self.ftp.print_output
+            self.ftp.print_input = False
+            self.ftp.print_output = False
+            self.download_directory(path1, path2)
+            self.ftp.print_input, self.ftp.print_output = old_in, old_out
         else:
+            path1 = args[0].rstrip('/')
+
             path2 = args[1] if len(args) > 1 else DOWNLOAD_DEFAULT_PATH
             path2 = os.path.expanduser(path2)
             if not os.path.isdir(path2):
                 self.eprint('"{}" is not a directory'.format(path2))
                 raise ValueError
-            path2 = os.path.normpath(path2 + '/' + os.path.split(args[0])[-1])
+            path2 = path2.rstrip('/') + '/' + os.path.split(path1)[-1]
             if os.path.isfile(path2):
                 os.remove(path2)
-            self.download_file(args[0], path2)
+
+            self.download_file(path1, path2)
 
     def download_file(self, path1, path2):
         """
@@ -170,23 +205,43 @@ class FTPClient:
                                                                       speed)
         print(info_string)
 
-    def upload_handler(self, args):
+    def download_directory(self, current_path, dest_path):
         """
-        usage: put [-r] <path1> [<path2>]
-        Send file which is located in 'path1' to the server's 'path2'
-        optional arguments:
-        -r\t\tSend whole directory to the server
+        :param current_path: current server's path
+        :param dest_path: current local path
         """
 
-        if not args or (args[0] == '-r' and len(args) == 1):
+        try:
+            files = self.ftp.list_files(current_path)
+        except ftplib.WrongResponse as e:
+            self.eprint(e)
+            return
+        for t in files:
+            name = t[0]
+            server_path = '{}/{}'.format(current_path, name)
+            print(server_path)
+            next_path = '{}/{}'.format(dest_path, name)
+            if t[1]:
+                try:
+                    self.download_file(server_path, next_path)
+                except ftplib.WrongResponse as e:
+                    self.eprint(e)
+            else:
+                os.mkdir(next_path)
+                self.download_directory(server_path, next_path)
+
+    def upload_handler(self, args):
+        """
+        usage: put <path1> [<path2>]
+        Send file which is located in 'path1' to the server's 'path2'
+        """
+
+        if not args:
             raise ValueError
-        if args[0] == '-r':
-            pass
-        else:
-            file_name = os.path.split(args[0])[-1]
-            path2 = args[1] if len(args) > 1 else './'
-            path2 = os.path.normpath('{}/{}'.format(path2, file_name))
-            self.upload_file(args[0], path2)
+        file_name = os.path.split(args[0])[-1]
+        path2 = args[1] if len(args) > 1 else './'
+        path2 = os.path.normpath('{}/{}'.format(path2, file_name))
+        self.upload_file(args[0], path2)
 
     def upload_file(self, path1, path2):
         """
@@ -346,13 +401,14 @@ class FTPClient:
         raise SystemExit
 
     def unknown_command_handler(self, args):
+        """
+        Handling unknown commands
+        """
         print('Unknown command. Use "help"')
 
     def eprint(self, *args, **kwargs):
         """
         Printing to the sys.stderr
-        :param args: some args
-        :param kwargs: some args
         """
 
         print(*args, file=sys.stderr, **kwargs)
