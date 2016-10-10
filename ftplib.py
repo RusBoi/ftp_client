@@ -57,7 +57,6 @@ class FTP:
         Try to get response from the server.
         :return: response from the server
         """
-
         lines = []
         regex = re.compile(r'^(?P<code>\d+?)(?P<delimeter> |-)(?P<message>.+)$')
         while True:
@@ -75,7 +74,6 @@ class FTP:
         Send message to the server.
         :param message: message which will be sent to the server
         """
-
         self.command_socket.sendall((message + '\r\n').encode('utf-8'))
 
     def run_command(self, command, *args, printin=True, printout=True):
@@ -88,7 +86,6 @@ class FTP:
         :param printout: print outcoming messages
         :return: response from the server
         """
-
         if args:
             message = '{} {}'.format(command, ' '.join(args))
         else:
@@ -123,7 +120,6 @@ class FTP:
         Open connection to retrieve and send data to the server.
         Connection can be open in two modes: passive and active (depending on "passive_state" flag)
         """
-
         self.data_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.data_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.data_socket.settimeout(TIMEOUT)
@@ -147,19 +143,18 @@ class FTP:
             self.data_socket.bind(('', local_port))
             self.data_socket.listen(100)
 
-    def read_data(self, bytes_count=BUFFER_SIZE, debug=False):
+    def read_data(self, buffer_size=BUFFER_SIZE, debug=False):
         """
-        Get data from data connection socket
-        :param bytes_count: if you know how much you need to read from data socket then you can specify it
+        Get data from data connection socket. The amount of data can't be bigger than MAX_SIZE
+        :param buffer_size: bytes to read in one iteration
         :param debug: if file is downloading the info will be printing
         :return: bytes of data
         """
-
         res = bytearray()
         length = 0
         if self.passive_state:
             while True:
-                chunk = self.data_socket.recv(bytes_count)
+                chunk = self.data_socket.recv(buffer_size)
                 res += chunk
                 if not chunk or length >= MAX_SIZE:
                     break
@@ -171,7 +166,7 @@ class FTP:
         else:
             conn = self.data_socket.accept()[0]
             while True:
-                chunk = conn.recv(bytes_count)
+                chunk = conn.recv(buffer_size)
                 res += chunk
                 if not chunk or length >= MAX_SIZE:
                     break
@@ -198,11 +193,10 @@ class FTP:
 
     def download_file(self, file_path):
         """
-        Download file from the server
+        Generator function which downloads file from the server
         :param file_path: name of the file
         :return bytes of data
         """
-
         try:
             resp = self.run_normal_command('SIZE', file_path)
             self._size = int(resp.message)
@@ -232,7 +226,6 @@ class FTP:
         :param file_path: name of the file
         :param data: file's content (bytes)
         """
-
         self.run_normal_command('TYPE', 'I')
         self.open_data_connection()
         self.run_normal_command('STOR', file_path)
@@ -263,23 +256,40 @@ class FTP:
         self.run_normal_command('DELE', path)
 
     def rename_file(self, current_name, name):
+        """
+        Rename file
+        :param current_name: current file's name
+        :param name: next file's name
+        """
         self.run_normal_command('RNFR', current_name)
         self.run_normal_command('RNTO', name)
 
     def remove_directory(self, path):
+        """
+        Remove directory on the server
+        :param path: directory's path
+        """
         self.run_normal_command('RMD', path)
 
     def change_directory(self, path):
+        """
+        Change current user directory
+        :param path: directory's path
+        """
         self.run_normal_command('CWD', path)
 
-    def make_directory(self, folder_name):
-        self.run_normal_command('MKD', folder_name)
+    def make_directory(self, path):
+        """
+        Make directory on the server
+        :param path: directory's path
+        """
+        self.run_normal_command('MKD', path)
 
     def list_files(self, path=''):
         """
-        Get files from the directory. No output
-        :param path: directory's path you need content from
-        :return: list of tuples (<file_name>(<dir_name>), <is it file>)
+        Get content of the directory. No output!
+        :param path: directory's path
+        :return: list of tuples (<file_name>(<dir_name>), <is_it_file>)
         """
         old_in, old_out = self.print_input, self.print_output
         self.print_input, self.print_output = False, False
@@ -297,6 +307,10 @@ class FTP:
         return res
 
     def get_files(self, path=''):
+        """
+        Get content of the directory
+        :param path: directory's path
+        """
         self.open_data_connection()
         self.run_normal_command('LIST', path)
         data = self.read_data().decode(encoding='utf-8', errors='skip')
@@ -304,9 +318,18 @@ class FTP:
         self.run_normal_command('')
 
     def get_filenames(self, path=''):
+        """
+        Get content of the directory in simplified way
+        :param path: directory's path
+        """
         files = self.list_files(path)
         for t in files:
             self.printout(t[0], 'file' if t[1] else 'directory', sep='     ')
 
-    def get_size(self, file_name):
-        self.run_normal_command('SIZE', file_name)
+    def get_size(self, path):
+        """
+        Get size of the file
+        :param path: file's path
+        :return:
+        """
+        self.run_normal_command('SIZE', path)

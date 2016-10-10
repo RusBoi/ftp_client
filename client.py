@@ -8,7 +8,6 @@ except:
     pass
 import sys
 import time
-import traceback
 
 from socket import timeout
 
@@ -16,7 +15,7 @@ DEFAULT_USERNAME = 'ftp'
 DEFAULT_PASS = 'example@email.com'
 DEFAULT_PORT = 21
 TIMEOUT_CODE = 421
-DOWNLOAD_DEFAULT_PATH = '~/Downloads/'
+DOWNLOAD_DEFAULT_PATH = './'
 
 
 class FTPClient:
@@ -83,12 +82,12 @@ class FTPClient:
 
         if hasattr(args, 'func'):
             if args.func == 'ls':
-                a = [args.path]
+                a = ['-l', args.path]
+            elif args.func == 'get' and args.r:
+                a = ['-r', args.path1, args.path2]
             else:
-                if args.r:
-                    a = ['-r', args.path1, args.path2]
-                else:
-                    a = [args.path1, args.path2]
+                a = [args.path1, args.path2]
+
             self.run_command(args.func, a)
             raise SystemExit
 
@@ -141,7 +140,6 @@ class FTPClient:
         optional arguments:
         -r\t\tReceive whole directory from the server
         """
-
         if not args or (args[0] == '-r' and len(args) == 1):
             raise ValueError
         if args[0] == '-r':
@@ -158,14 +156,17 @@ class FTPClient:
             path2 = path2.rstrip('/') + '/' + dirname
             try:
                 os.mkdir(path2)
-            except FileExistsError as e:
-                print(e)
+            except:
+                self.eprint(sys.exc_info()[1])
                 return
 
+            # замьютим все сообщения
             old_in, old_out = self.ftp.print_input, self.ftp.print_output
             self.ftp.print_input = False
             self.ftp.print_output = False
+
             self.download_directory(path1, path2)
+            # вернем сообщения обратно
             self.ftp.print_input, self.ftp.print_output = old_in, old_out
         else:
             path1 = args[0].rstrip('/')
@@ -186,7 +187,6 @@ class FTPClient:
         :param path1: server file's path to the file
         :param path2: destination file's path on the local machine
         """
-
         bytes_count = 0
         start = time.time()
         for data in self.ftp.download_file(path1):
@@ -210,7 +210,6 @@ class FTPClient:
         :param current_path: current server's path
         :param dest_path: current local path
         """
-
         try:
             files = self.ftp.list_files(current_path)
         except ftplib.WrongResponse as e:
@@ -235,11 +234,11 @@ class FTPClient:
         usage: put <path1> [<path2>]
         Send file which is located in 'path1' to the server's 'path2'
         """
-
         if not args:
             raise ValueError
         file_name = os.path.split(args[0])[-1]
         path2 = args[1] if len(args) > 1 else './'
+        path2 = path2.rstrip('/')
         path2 = os.path.normpath('{}/{}'.format(path2, file_name))
         self.upload_file(args[0], path2)
 
@@ -261,7 +260,6 @@ class FTPClient:
         usage: user <username>
         Send new user information
         """
-
         if not args:
             raise ValueError
         username = args[0]
@@ -277,7 +275,6 @@ class FTPClient:
         """
         Print current directory on remote machine
         """
-
         self.ftp.get_location()
 
     def remove_handler(self, args):
@@ -287,7 +284,6 @@ class FTPClient:
         optional arguments:
         -r\t\tremove directory
         """
-
         if not args or (args[0] == '-r' and len(args) == 1):
             raise ValueError
         if args[0] == '-r':
@@ -300,7 +296,6 @@ class FTPClient:
         usage: ren <file name>
         Rename file
         """
-
         if len(args) != 2:
             raise ValueError
         else:
@@ -311,7 +306,6 @@ class FTPClient:
         usage: cd <path>
         Change remote working directory
         """
-
         if not args:
             raise ValueError
         self.ftp.change_directory(args[0])
@@ -321,7 +315,6 @@ class FTPClient:
         usage: mkdir <directory name>
         Make directory on the remote machine
         """
-
         if not args:
             raise ValueError
         self.ftp.make_directory(args[0])
@@ -333,7 +326,6 @@ class FTPClient:
         opitonal arguments:
         -l\t\tShow content in list
         """
-
         if args:
             if args[0] == '-l':
                 if len(args) > 1:
@@ -350,7 +342,6 @@ class FTPClient:
         usage: size <file_name>
         Show size of remote file
         """
-
         if not args:
             raise ValueError
         self.ftp.get_size(args[0])
@@ -359,7 +350,6 @@ class FTPClient:
         """
         Toggle debugging mode
         """
-
         if self.ftp.print_output:
             print('Debug is off')
         else:
@@ -370,7 +360,6 @@ class FTPClient:
         """
         Enter passive or active transfer mode
         """
-
         self.ftp.passive_state = not self.ftp.passive_state
         message = 'Passive mode is on' if self.ftp.passive_state else 'Active mode is on'
         print(message)
@@ -380,7 +369,6 @@ class FTPClient:
         usage: help [<command>]
         Print local help information about command. If command isn't specified show all available commands
         """
-
         if not args:
             print('Commands: ')
             print('    '.join(filter(None, self.handlers.keys())))
@@ -402,15 +390,14 @@ class FTPClient:
 
     def unknown_command_handler(self, args):
         """
-        Handling unknown commands
+        Handle unknown commands
         """
         print('Unknown command. Use "help"')
 
     def eprint(self, *args, **kwargs):
         """
-        Printing to the sys.stderr
+        Print message to the sys.stderr
         """
-
         print(*args, file=sys.stderr, **kwargs)
 
 
