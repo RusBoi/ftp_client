@@ -1,6 +1,5 @@
-import socket
 import re
-
+import socket
 from response import Response
 
 
@@ -129,6 +128,8 @@ class FTP:
             func = lambda x: '.' if x == ',' else x
             res = self.run_normal_command('PASV')
             match = regex.search(res.message)
+            if not match:
+                raise WrongResponse
             ip = ''.join(map(func, match.group(1)))
             port = 256 * int(match.group(2)) + int(match.group(3))
             self.data_socket.connect((ip, port))

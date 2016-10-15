@@ -1,68 +1,37 @@
-import argparse
+import const
 import ftplib
+import functools
 import getpass
 import os.path
 try:
     import readline
-except:
+finally:
     pass
 import sys
 import time
 
+from parser import Parser
 from shlex import split
 from socket import timeout
 
-DEFAULT_USERNAME = 'ftp'
-DEFAULT_PASS = 'example@email.com'
-DEFAULT_PORT = 21
-TIMEOUT_CODE = 421
-DOWNLOAD_DEFAULT_PATH = './'
-
 
 def get_func(method: staticmethod):
+    @functools.wraps(method.__func__)
     def wrapper(args):
         return method.__func__(args)
-
-    wrapper.__name__ = method.__func__.__name__
-    wrapper.__doc__ = method.__func__.__doc__
     return wrapper
 
 
 class FTPClient:
     ftp = None
+    current_directory = '/'
 
     @staticmethod
-    def parse_arguments():
-        parser = argparse.ArgumentParser(description="""ftp client server""")
-        parser.add_argument('host', help='host to connect to')
-        parser.add_argument('--port', '-p', type=int, help='port to connect to', default=DEFAULT_PORT)
-        parser.add_argument('--user', '-u', help='username to login', default=DEFAULT_USERNAME)
-        parser.add_argument('--passwd', help='password to login')
-        parser.add_argument('--debug', help='debug mode', action="store_true")
-        subparsers = parser.add_subparsers(title='commands to execute')
-
-        parser_put = subparsers.add_parser('put', aliases=['upload'], help='upload file to the server')
-        parser_put.add_argument('path1', help='path where file located on local machine')
-        parser_put.add_argument('path2', nargs='?', default='.', help='path where file will be uploaded on the server')
-        parser_put.set_defaults(func='put')
-
-        parser_get = subparsers.add_parser('get', aliases=['download'], help='download file from the server')
-        parser_get.add_argument('-r', action='store_true', help='download directory')
-        parser_get.add_argument('path1', help='path where file located on the server')
-        parser_get.add_argument('path2', nargs='?', default=DOWNLOAD_DEFAULT_PATH,
-                                help='path where file will be stored on local machine')
-        parser_get.set_defaults(func='get')
-
-        parser_ls = subparsers.add_parser('ls', help='show content of remote directory')
-        parser_ls.add_argument('path', help='path of the remote directory')
-        parser_ls.set_defaults(func='ls')
-
-        args = parser.parse_args()
-
+    def connect(arguments):
         try:
-            host = args.host or input('Enter host name: ')
-            FTPClient.ftp = ftplib.FTP(host, args.port, printout=print,
-                                       print_output=args.debug, print_input=not hasattr(args, 'func'))
+            host = arguments.host or input('Enter host name: ')
+            FTPClient.ftp = ftplib.FTP(host, arguments.port, printout=print,
+                                       print_output=arguments.debug, print_input=not hasattr(arguments, 'func'))
         except KeyboardInterrupt:
             print()
             raise SystemExit
@@ -70,21 +39,21 @@ class FTPClient:
             FTPClient.eprint(sys.exc_info()[1])
             raise SystemExit
 
-        if args.user != DEFAULT_USERNAME and not args.passwd:
-            FTPClient.run_command('user', [args.user])
+        if arguments.user != const.DEFAULT_USERNAME and not arguments.passwd:
+            FTPClient.run_command('user', [arguments.user])
         else:
-            password = args.passwd or DEFAULT_PASS
-            FTPClient.run_command('user', [args.user, password])
+            password = arguments.passwd or const.DEFAULT_PASS
+            FTPClient.run_command('user', [arguments.user, password])
 
-        if hasattr(args, 'func'):
-            if args.func == 'ls':
-                a = ['-l', args.path]
-            elif args.func == 'get' and args.r:
-                a = ['-r', args.path1, args.path2]
+        if hasattr(arguments, 'func'):
+            if arguments.func == 'ls':
+                a = ['-l', arguments.path]
+            elif arguments.func == 'get' and arguments.r:
+                a = ['-r', arguments.path1, arguments.path2]
             else:
-                a = [args.path1, args.path2]
+                a = [arguments.path1, arguments.path2]
 
-            FTPClient.run_command(args.func, a)
+            FTPClient.run_command(arguments.func, a)
             raise SystemExit
 
     @staticmethod
@@ -115,20 +84,26 @@ class FTPClient:
             FTPClient.handlers[command](args)
         except ftplib.WrongResponse as e:
             print('<<', e.response)
-            if e.response.code == TIMEOUT_CODE:
-                # Если timeout то соединение восстановить не удастся и поэтому закроем клиент
-                FTPClient.exit_handler([])
+            if e.response.code == const.TIMEOUT_CODE:
+                print('Trying to reconnect')
+                FTPClient.reconnect()
         except ValueError:
             FTPClient.eprint('Wrong arguments. Use "help <command>"')
         except KeyboardInterrupt:
             print()
             pass
         except timeout:
-            print('Time out. Exiting program...')
-            FTPClient.exit_handler([])
+            print('Time out')
+            print('Trying to reconnect')
+            FTPClient.reconnect()
         except ConnectionError:
             print(sys.exc_info()[1])
-            FTPClient.exit_handler([])
+            print('Trying to reconnect')
+            FTPClient.reconnect()
+        else:
+            # если не возникло никаких ошибок при переходе в новую директорию, то запоминаем ее как текущую
+            if command == 'cd' and args:
+                FTPClient.current_directory = args[0]
 
     @get_func
     @staticmethod
@@ -150,7 +125,7 @@ class FTPClient:
             if len(args) > 2:
                 path2 = os.path.expanduser(args[2])
             else:
-                path2 = os.path.expanduser(DOWNLOAD_DEFAULT_PATH)
+                path2 = os.path.expanduser(const.DOWNLOAD_DEFAULT_PATH)
             if not os.path.isdir(path2):
                 FTPClient.eprint('"{}" is not a directory'.format(path2))
                 raise ValueError
@@ -174,7 +149,7 @@ class FTPClient:
         else:
             path1 = args[0].rstrip('/')
 
-            path2 = args[1] if len(args) > 1 else DOWNLOAD_DEFAULT_PATH
+            path2 = args[1] if len(args) > 1 else const.DOWNLOAD_DEFAULT_PATH
             path2 = os.path.expanduser(path2)
             if not os.path.isdir(path2):
                 FTPClient.eprint('"{}" is not a directory'.format(path2))
@@ -449,6 +424,12 @@ class FTPClient:
                 break
         return path
 
+    @staticmethod
+    def reconnect():
+        args = Parser.parse_arguments()
+        FTPClient.connect(args)
+        FTPClient.cd_handler([FTPClient.current_directory])
+
     handlers = {
         'get': download_handler,
         'put': upload_handler,
@@ -467,6 +448,8 @@ class FTPClient:
         None: unknown_command_handler
     }
 
+
 if __name__ == '__main__':
-    FTPClient.parse_arguments()
+    a = Parser.parse_arguments()
+    FTPClient.connect(a)
     FTPClient.run()
