@@ -2,6 +2,7 @@ import json
 import re
 import socket
 
+from mode import Mode
 from response import Response
 
 
@@ -27,7 +28,7 @@ class FTP:
                  callback=print, verbose_input=True, verbose_output=False):
         self.command_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.callback = callback
-        self.passive_state = True
+        self.passive_mode = True
         self.verbose_input = verbose_input
         self.verbose_output = verbose_output
 
@@ -38,7 +39,7 @@ class FTP:
 
         self.command_socket.settimeout(config['TIMEOUT'])
         self.command_socket.connect((host, port))
-        self.run_command('')
+        self._get_response()
 
     def close_connection(self):
         """Close connection with the server
@@ -115,27 +116,27 @@ class FTP:
     def open_data_connection(self):
         """Open connection to retrieve and send data to the server.
         Connection can be open in two modes: passive and active
-        (depending on "passive_state" flag)
+        (depending on "passive_mode" flag)
         """
         self.data_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.data_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.data_socket.settimeout(config['TIMEOUT'])
 
-        if self.passive_state:
+        if self.passive_mode:
             regex = re.compile(r'\((\d+,\d+,\d+,\d+),(\d+),(\d+)\)')
-            func = lambda x: '.' if x == ',' else x
             res = self.run_command('PASV')
             match = regex.search(res.message)
             if not match:
                 raise WrongResponse
-            ip = ''.join(map(func, match.group(1)))
+            ip = ''.join(map(lambda x: '.' if x == ',' else x, match.group(1)))
             port = 256 * int(match.group(2)) + int(match.group(3))
             self.data_socket.connect((ip, port))
         else:
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             s.connect(("google.com", 80))
-            func = lambda x: ',' if x == '.' else x
-            local_ip = ''.join(map(func, s.getsockname()[0]))
+            local_ip = ''.join(map(
+                lambda x: ',' if x == '.' else x,
+                s.getsockname()[0]))
             local_port = int(s.getsockname()[1])
 
             self.run_command(
@@ -144,23 +145,19 @@ class FTP:
             self.data_socket.bind(('', local_port))
             self.data_socket.listen(100)
 
-    def read_data(self, buffer_size=BUFFER_SIZE, debug=False):
-        """
-        Get data from data connection socket. The amount of data can't be
+    def read_data(self, buffer_size=BUFFER_SIZE, print_state=False):
+        """Get data from data connection socket. The amount of data can't be
         bigger than MAX_SIZE
-        :param buffer_size: bytes to read in one iteration
-        :param debug: if file is downloading the info will be printing
-        :return: bytes of data
         """
         res = bytearray()
         length = 0
-        if self.passive_state:
+        if self.passive_mode:
             while True:
                 chunk = self.data_socket.recv(buffer_size)
                 res += chunk
                 if not chunk or length >= MAX_SIZE:
                     break
-                if debug:
+                if print_state:
                     length += len(chunk)
                     self._current_size += len(chunk)
                     pers = round(self._current_size / self._size * 100, 2)
@@ -172,7 +169,7 @@ class FTP:
                 res += chunk
                 if not chunk or length >= MAX_SIZE:
                     break
-                if debug:
+                if print_state:
                     length += len(chunk)
                     self._current_size += len(chunk)
                     pers = round(self._current_size / self._size * 100, 2)
@@ -183,13 +180,16 @@ class FTP:
     def send_data(self, bytes):
         """Send data via data connection socket
         """
-        if self.passive_state:
+        if self.passive_mode:
             self.data_socket.sendall(bytes)
         else:
             conn, _ = self.data_socket.accept()
             conn.sendall(bytes)
             conn.close()
         self.data_socket.close()
+
+    def switch_mode(self, mode: Mode):
+        self.run_command('TYPE', mode.value[0])
 
     def get_file(self, path):
         try:
@@ -199,15 +199,15 @@ class FTP:
             self._size = None
         self._current_size = 0
 
-        self.run_command('TYPE', 'I')
+        self.switch_mode(Mode.Binary)
         self.open_data_connection()
         self.run_command('RETR', path)
 
         while True:
             if self._size:
-                data = self.read_data(debug=True)
+                data = self.read_data(print_state=True)
             else:
-                data = self.read_data(debug=False)
+                data = self.read_data(print_state=False)
             if len(data) == 0:
                 self.data_socket.close()
                 self.run_command('')
@@ -216,7 +216,7 @@ class FTP:
                 yield data
 
     def upload_file(self, path, data):
-        self.run_command('TYPE', 'I')
+        self.switch_mode(Mode.Binary)
         self.open_data_connection()
         self.run_command('STOR', path)
         self.send_data(data)
@@ -232,6 +232,9 @@ class FTP:
         self.run_command('RNFR', old_name)
         self.run_command('RNTO', new_name)
 
+    def get_size(self, path):
+        self.run_command('SIZE', path)
+
     def remove_directory(self, path):
         self.run_command('RMD', path)
 
@@ -241,38 +244,19 @@ class FTP:
     def make_directory(self, path):
         self.run_command('MKD', path)
 
-    def list_files(self, path=''):
-        """Get content of the directory.
-        Returns: list of tuples (<file_name>, <is_file>)
-        """
-        old_in, old_out = self.verbose_input, self.verbose_output
-        self.verbose_input, self.verbose_output = False, False
-        self.open_data_connection()
-        self.verbose_input, self.verbose_output = old_in, old_out
-
-        self.run_command('LIST', path, printin=False, printout=False)
-        data = self.read_data().decode(encoding='utf-8', errors='skip')
-        self.run_command('', printin=False, printout=False)
-
-        res = []
-        for line in filter(None, data.split('\r\n')):
-            res.append((line.split()[-1], line[0] == '-'))
-
-        return res
-
-    def get_files(self, path=''):
-        """Get content of the directory
-        """
+    def _list_files(self, path=''):
         self.open_data_connection()
         self.run_command('LIST', path)
-        data = self.read_data().decode(encoding='utf-8', errors='skip')
-        self.callback(data)
-        self.run_command('')
+        result = self.read_data().decode(encoding='utf-8', errors='skip')
+        self._get_response()
+        return result
 
-    def list_directory(self, path=''):
-        files = self.list_files(path)
-        for t in files:
-            self.callback(t[0], 'file' if t[1] else 'directory', sep='     ')
+    def list_files(self, path=''):
+        """Returns list of tuples (<file_name>, <is_file>)
+        """
+        data = self._list_files()
 
-    def get_size(self, path):
-        return self.run_command('SIZE', path)
+        result = []
+        for line in filter(None, data.split('\r\n')):
+            result.append((line.split()[-1], line[0] == '-'))
+        return result
