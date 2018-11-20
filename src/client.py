@@ -30,7 +30,7 @@ class FTPClient:
     def connect(arguments):
         try:
             host = arguments.host or input('Enter host name: ')
-            FTPClient.ftp = ftplib.FTP(host, arguments.port, printout=print,
+            FTPClient.ftp = ftplib.FtpClient(host, arguments.port, printout=print,
                                        print_output=arguments.debug, print_input=not hasattr(arguments, 'func'))
         except KeyboardInterrupt:
             print()
