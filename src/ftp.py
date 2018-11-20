@@ -32,8 +32,6 @@ class FTP:
         self.verbose_input = verbose_input
         self.verbose_output = verbose_output
 
-        self._size = None
-        self._current_size = None
         self._resp_regex = re.compile(
             r'^(?P<code>\d+?)(?P<delimeter> |-)(?P<message>.+)$')
 
@@ -76,6 +74,67 @@ class FTP:
         """
         self.command_socket.sendall((message + '\r\n').encode('utf-8'))
 
+    def _open_data_connection(self):
+        """Open connection to retrieve and send data to the server.
+        Connection can be open in two modes: passive and active
+        (depending on "passive_mode" flag)
+        """
+        self.data_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.data_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.data_socket.settimeout(config['TIMEOUT'])
+
+        if self.passive_mode:
+            regex = re.compile(r'\((\d+,\d+,\d+,\d+),(\d+),(\d+)\)')
+            res = self.run_command('PASV')
+            match = regex.search(res.message)
+            if not match:
+                raise WrongResponse
+            ip = ''.join(map(lambda x: '.' if x == ',' else x, match.group(1)))
+            port = 256 * int(match.group(2)) + int(match.group(3))
+            self.data_socket.connect((ip, port))
+        else:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("google.com", 80))
+            local_ip = ''.join(map(
+                lambda x: ',' if x == '.' else x,
+                s.getsockname()[0]))
+            local_port = int(s.getsockname()[1])
+
+            self.run_command(
+                'PORT',
+                f'{local_ip},{local_port // 256},{local_port % 256}')
+            self.data_socket.bind(('', local_port))
+            self.data_socket.listen(100)
+
+    def _read_data(self, data_size=None, buffer_size=BUFFER_SIZE):
+        """Get data from data connection socket. The amount of data can't be
+        bigger than MAX_SIZE
+        """
+        downloaded_size = 0
+        if self.passive_mode:
+            sock = self.data_socket
+        else:
+            sock = self.data_socket.accept()[0]
+            sock.settimeout(config['TIMEOUT'])
+
+        while True:
+            chunk = sock.recv(buffer_size)
+            downloaded_size += len(chunk)
+            yield chunk
+            if chunk == b'':  # or downloaded_size >= data_size:
+                break
+
+    def _send_data(self, bytes):
+        """Send data via data connection socket
+        """
+        if self.passive_mode:
+            self.data_socket.sendall(bytes)
+        else:
+            conn, _ = self.data_socket.accept()
+            conn.sendall(bytes)
+            conn.close()
+        self.data_socket.close()
+
     def run_command(self, command, *args, printin=None, printout=None):
         """Send command to the server and get response. If response is bad than
         WrongResponse exception is raised. If there is no exception than print
@@ -113,113 +172,27 @@ class FTP:
     def quit(self):
         self.run_command("QUIT")
 
-    def open_data_connection(self):
-        """Open connection to retrieve and send data to the server.
-        Connection can be open in two modes: passive and active
-        (depending on "passive_mode" flag)
-        """
-        self.data_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.data_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.data_socket.settimeout(config['TIMEOUT'])
-
-        if self.passive_mode:
-            regex = re.compile(r'\((\d+,\d+,\d+,\d+),(\d+),(\d+)\)')
-            res = self.run_command('PASV')
-            match = regex.search(res.message)
-            if not match:
-                raise WrongResponse
-            ip = ''.join(map(lambda x: '.' if x == ',' else x, match.group(1)))
-            port = 256 * int(match.group(2)) + int(match.group(3))
-            self.data_socket.connect((ip, port))
-        else:
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.connect(("google.com", 80))
-            local_ip = ''.join(map(
-                lambda x: ',' if x == '.' else x,
-                s.getsockname()[0]))
-            local_port = int(s.getsockname()[1])
-
-            self.run_command(
-                'PORT',
-                f'{local_ip},{local_port // 256},{local_port % 256}')
-            self.data_socket.bind(('', local_port))
-            self.data_socket.listen(100)
-
-    def read_data(self, buffer_size=BUFFER_SIZE, print_state=False):
-        """Get data from data connection socket. The amount of data can't be
-        bigger than MAX_SIZE
-        """
-        res = bytearray()
-        length = 0
-        if self.passive_mode:
-            while True:
-                chunk = self.data_socket.recv(buffer_size)
-                res += chunk
-                if not chunk or length >= MAX_SIZE:
-                    break
-                if print_state:
-                    length += len(chunk)
-                    self._current_size += len(chunk)
-                    pers = round(self._current_size / self._size * 100, 2)
-                    self.callback('{}%\r'.format(pers), end='')
-        else:
-            conn = self.data_socket.accept()[0]
-            while True:
-                chunk = conn.recv(buffer_size)
-                res += chunk
-                if not chunk or length >= MAX_SIZE:
-                    break
-                if print_state:
-                    length += len(chunk)
-                    self._current_size += len(chunk)
-                    pers = round(self._current_size / self._size * 100, 2)
-                    self.callback('{}%\r'.format(pers), end='')
-            conn.close()
-        return res
-
-    def send_data(self, bytes):
-        """Send data via data connection socket
-        """
-        if self.passive_mode:
-            self.data_socket.sendall(bytes)
-        else:
-            conn, _ = self.data_socket.accept()
-            conn.sendall(bytes)
-            conn.close()
-        self.data_socket.close()
-
     def switch_mode(self, mode: Mode):
         self.run_command('TYPE', mode.value[0])
 
     def get_file(self, path):
         try:
             resp = self.run_command('SIZE', path)
-            self._size = int(resp.message)
+            file_size = int(resp.message)
         except:
-            self._size = None
-        self._current_size = 0
+            file_size = None
 
         self.switch_mode(Mode.Binary)
-        self.open_data_connection()
+        self._open_data_connection()
         self.run_command('RETR', path)
-
-        while True:
-            if self._size:
-                data = self.read_data(print_state=True)
-            else:
-                data = self.read_data(print_state=False)
-            if len(data) == 0:
-                self.data_socket.close()
-                self.run_command('')
-                break
-            else:
-                yield data
+        yield from self._read_data()
+        self._get_response()
 
     def upload_file(self, path, data):
         self.switch_mode(Mode.Binary)
-        self.open_data_connection()
+        self._open_data_connection()
         self.run_command('STOR', path)
-        self.send_data(data)
+        self._send_data(data)
         self.run_command('')
 
     def current_location(self):
@@ -245,11 +218,14 @@ class FTP:
         self.run_command('MKD', path)
 
     def _list_files(self, path=''):
-        self.open_data_connection()
+        self._open_data_connection()
         self.run_command('LIST', path)
-        result = self.read_data().decode(encoding='utf-8', errors='skip')
+
+        chunks = []
+        for chunk in self._read_data():
+            chunks.append(chunk.decode(encoding='utf-8', errors='skip'))
         self._get_response()
-        return result
+        return ''.join(chunks)
 
     def list_files(self, path=''):
         """Returns list of tuples (<file_name>, <is_file>)
@@ -260,3 +236,9 @@ class FTP:
         for line in filter(None, data.split('\r\n')):
             result.append((line.split()[-1], line[0] == '-'))
         return result
+
+# if print_state:
+#     length += len(chunk)
+#     self._current_size += len(chunk)
+#     pers = round(self._current_size / self._size * 100, 2)
+#     self.callback('{}%\r'.format(pers), end='')
