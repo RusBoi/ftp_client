@@ -41,6 +41,8 @@ class FTP:
         self.run_command('')
 
     def close_connection(self):
+        """Close connection with the server
+        """
         self.command_socket.close()
 
     def _read_line(self):
@@ -95,17 +97,17 @@ class FTP:
                 else:
                     self.callback(f'>> {message}')
 
-        response = self._get_response()
-        if not response.success:
-            raise WrongResponse(response)
+        result = self._get_response()
+        if not result.success:
+            raise WrongResponse(result)
         if printin:
-            self.callback(f'<< {response}')
-        return response
+            self.callback(f'<< {result}')
+        return result
 
     def login(self, user=config['DEFAULT_USERNAME'],
-              passwd=config['DEFAULT_PASS']):
+              password=config['DEFAULT_PASS']):
         self.run_command('USER', user)
-        self.run_command('PASS', passwd)
+        self.run_command('PASS', password)
 
     def quit(self):
         self.run_command("QUIT")
@@ -121,19 +123,19 @@ class FTP:
 
         if self.passive_state:
             regex = re.compile(r'\((\d+,\d+,\d+,\d+),(\d+),(\d+)\)')
-            response = self.run_command('PASV')
-            match = regex.search(response.message)
+            func = lambda x: '.' if x == ',' else x
+            res = self.run_command('PASV')
+            match = regex.search(res.message)
             if not match:
-                raise WrongResponse(response)
-            ip = ''.join(map(lambda x: '.' if x == ',' else x, match.group(1)))
+                raise WrongResponse
+            ip = ''.join(map(func, match.group(1)))
             port = 256 * int(match.group(2)) + int(match.group(3))
             self.data_socket.connect((ip, port))
         else:
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             s.connect(("google.com", 80))
-            local_ip = ''.join(map(
-                lambda x: ',' if x == '.' else x,
-                s.getsockname()[0]))
+            func = lambda x: ',' if x == '.' else x
+            local_ip = ''.join(map(func, s.getsockname()[0]))
             local_port = int(s.getsockname()[1])
 
             self.run_command(
@@ -189,7 +191,7 @@ class FTP:
             conn.close()
         self.data_socket.close()
 
-    def download_file(self, path):
+    def get_file(self, path):
         try:
             resp = self.run_command('SIZE', path)
             self._size = int(resp.message)
@@ -214,47 +216,30 @@ class FTP:
                 yield data
 
     def upload_file(self, path, data):
-        """Upload a file on the server
-        """
         self.run_command('TYPE', 'I')
         self.open_data_connection()
         self.run_command('STOR', path)
         self.send_data(data)
         self.run_command('')
 
-    def get_location(self):
-        """Get current user location on the server
-        """
+    def current_location(self):
         self.run_command('PWD')
 
     def remove_file(self, path):
-        """Remove file from the server
-        """
         self.run_command('DELE', path)
 
     def rename_file(self, old_name, new_name):
-        """Rename file
-        """
         self.run_command('RNFR', old_name)
         self.run_command('RNTO', new_name)
 
     def remove_directory(self, path):
-        """Remove directory on the server
-        """
         self.run_command('RMD', path)
 
     def change_directory(self, path):
-        """Change current user directory
-        """
         self.run_command('CWD', path)
 
     def make_directory(self, path):
-        """Make directory on the server
-        """
         self.run_command('MKD', path)
-
-    def get_size(self, path):
-        return self.run_command('SIZE', path)
 
     def list_files(self, path=''):
         """Get content of the directory.
@@ -276,6 +261,8 @@ class FTP:
         return res
 
     def get_files(self, path=''):
+        """Get content of the directory
+        """
         self.open_data_connection()
         self.run_command('LIST', path)
         data = self.read_data().decode(encoding='utf-8', errors='skip')
@@ -285,4 +272,7 @@ class FTP:
     def list_directory(self, path=''):
         files = self.list_files(path)
         for t in files:
-            self.callback(t[0], 'file' if t[1] else 'directory', sep=' ' * 5)
+            self.callback(t[0], 'file' if t[1] else 'directory', sep='     ')
+
+    def get_size(self, path):
+        return self.run_command('SIZE', path)
