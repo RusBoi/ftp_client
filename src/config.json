@@ -2,5 +2,6 @@
     "DEFAULT_USERNAME": "anonymous",
     "DEFAULT_PASS": "example@email.net",
     "DEFAULT_PORT": 21,
-    "TIMEOUT": 60
+    "TIMEOUT": 60,
+    "DATA_SOCK_TIMEOUT": 15
 }

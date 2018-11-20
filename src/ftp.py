@@ -81,7 +81,7 @@ class FTP:
         """
         self.data_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.data_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.data_socket.settimeout(config['TIMEOUT'])
+        self.data_socket.settimeout(config['DATA_SOCK_TIMEOUT'])
 
         if self.passive_mode:
             regex = re.compile(r'\((\d+,\d+,\d+,\d+),(\d+),(\d+)\)')
@@ -106,7 +106,8 @@ class FTP:
             self.data_socket.bind(('', local_port))
             self.data_socket.listen(100)
 
-    def _read_data(self, data_size=None, buffer_size=BUFFER_SIZE):
+    def _read_data(self, data_size=None, buffer_size=BUFFER_SIZE,
+                   show_progress=False):
         """Get data from data connection socket. The amount of data can't be
         bigger than MAX_SIZE
         """
@@ -115,25 +116,30 @@ class FTP:
             sock = self.data_socket
         else:
             sock = self.data_socket.accept()[0]
-            sock.settimeout(config['TIMEOUT'])
+            sock.settimeout(config['DATA_SOCK_TIMEOUT'])
 
         while True:
             chunk = sock.recv(buffer_size)
             downloaded_size += len(chunk)
             yield chunk
-            if chunk == b'':  # or downloaded_size >= data_size:
+            if show_progress:
+                if data_size is None:
+                    print(f'{downloaded_size // 1024 >> 10}MB', end='\r')
+                else:
+                    percents = str(round(downloaded_size / data_size * 100))
+                    print(percents + '%', end='\r')
+            if chunk == b'':
                 break
 
     def _send_data(self, bytes):
         """Send data via data connection socket
         """
         if self.passive_mode:
-            self.data_socket.sendall(bytes)
+            conn = self.data_socket
         else:
             conn, _ = self.data_socket.accept()
-            conn.sendall(bytes)
-            conn.close()
-        self.data_socket.close()
+        conn.sendall(bytes)
+        conn.close()
 
     def run_command(self, command, *args, printin=None, printout=None):
         """Send command to the server and get response. If response is bad than
@@ -177,15 +183,15 @@ class FTP:
 
     def get_file(self, path):
         try:
-            resp = self.run_command('SIZE', path)
-            file_size = int(resp.message)
-        except:
+            resp = self.get_size(path)
+            file_size = int(resp)
+        except ValueError:
             file_size = None
 
         self.switch_mode(Mode.Binary)
         self._open_data_connection()
         self.run_command('RETR', path)
-        yield from self._read_data()
+        yield from self._read_data(file_size, show_progress=True)
         self._get_response()
 
     def upload_file(self, path, data):
@@ -193,10 +199,10 @@ class FTP:
         self._open_data_connection()
         self.run_command('STOR', path)
         self._send_data(data)
-        self.run_command('')
+        self._get_response()
 
-    def current_location(self):
-        self.run_command('PWD')
+    def get_current_location(self):
+        return self.run_command('PWD').message
 
     def remove_file(self, path):
         self.run_command('DELE', path)
@@ -206,7 +212,10 @@ class FTP:
         self.run_command('RNTO', new_name)
 
     def get_size(self, path):
-        self.run_command('SIZE', path)
+        self.switch_mode(Mode.Binary)
+        result = self.run_command('SIZE', path).message
+        self.switch_mode(Mode.Ascii)
+        return result
 
     def remove_directory(self, path):
         self.run_command('RMD', path)
@@ -230,15 +239,9 @@ class FTP:
     def list_files(self, path=''):
         """Returns list of tuples (<file_name>, <is_file>)
         """
-        data = self._list_files()
+        data = self._list_files(path)
 
         result = []
         for line in filter(None, data.split('\r\n')):
             result.append((line.split()[-1], line[0] == '-'))
         return result
-
-# if print_state:
-#     length += len(chunk)
-#     self._current_size += len(chunk)
-#     pers = round(self._current_size / self._size * 100, 2)
-#     self.callback('{}%\r'.format(pers), end='')
