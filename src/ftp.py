@@ -1,4 +1,3 @@
-import json
 import re
 import socket
 
@@ -8,10 +7,8 @@ from response import Response
 
 BUFFER_SIZE = 1024 ** 2 * 20  # 20MB
 MAX_SIZE = (1024 ** 3)  # 1GB
-
-
-with open('config.json') as f:
-    config = json.load(f)
+TIMEOUT = 60
+DATA_SOCK_TIMEOUT = 15
 
 
 class Error(Exception):
@@ -24,8 +21,8 @@ class WrongResponse(Error):
 
 
 class FTP:
-    def __init__(self, host, port=config['DEFAULT_PORT'],
-                 callback=print, verbose_input=True, verbose_output=False):
+    def __init__(self, host, port, callback=print,
+                 verbose_input=True, verbose_output=False):
         self.command_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.callback = callback
         self.passive_mode = True
@@ -35,13 +32,11 @@ class FTP:
         self._resp_regex = re.compile(
             r'^(?P<code>\d+?)(?P<delimeter> |-)(?P<message>.+)$')
 
-        self.command_socket.settimeout(config['TIMEOUT'])
+        self.command_socket.settimeout(TIMEOUT)
         self.command_socket.connect((host, port))
         self._get_response()
 
-    def close_connection(self):
-        """Close connection with the server
-        """
+    def _close_connection(self):
         self.command_socket.close()
 
     def _read_line(self):
@@ -81,7 +76,7 @@ class FTP:
         """
         self.data_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.data_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.data_socket.settimeout(config['DATA_SOCK_TIMEOUT'])
+        self.data_socket.settimeout(DATA_SOCK_TIMEOUT)
 
         if self.passive_mode:
             regex = re.compile(r'\((\d+,\d+,\d+,\d+),(\d+),(\d+)\)')
@@ -116,7 +111,7 @@ class FTP:
             sock = self.data_socket
         else:
             sock = self.data_socket.accept()[0]
-            sock.settimeout(config['DATA_SOCK_TIMEOUT'])
+            sock.settimeout(DATA_SOCK_TIMEOUT)
 
         while True:
             chunk = sock.recv(buffer_size)
@@ -170,13 +165,13 @@ class FTP:
             self.callback(f'<< {result}')
         return result
 
-    def login(self, user=config['DEFAULT_USERNAME'],
-              password=config['DEFAULT_PASS']):
+    def login(self, user, password):
         self.run_command('USER', user)
         self.run_command('PASS', password)
 
     def quit(self):
         self.run_command("QUIT")
+        self._close_connection()
 
     def switch_mode(self, mode: Mode):
         self.run_command('TYPE', mode.value[0])
