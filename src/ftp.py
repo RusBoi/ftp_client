@@ -48,7 +48,7 @@ class FTP:
             if byte in (b'\n', b''):
                 break
             res += byte
-        return res[:-1].decode(errors='skip')
+        return res[:-1].decode(errors='ignore')
 
     def _get_response(self):
         """Get response from the server.
@@ -83,7 +83,7 @@ class FTP:
             res = self.run_command('PASV')
             match = regex.search(res.message)
             if not match:
-                raise WrongResponse
+                raise WrongResponse(res)
             ip = ''.join(map(lambda x: '.' if x == ',' else x, match.group(1)))
             port = 256 * int(match.group(2)) + int(match.group(3))
             self.data_socket.connect((ip, port))
@@ -227,7 +227,7 @@ class FTP:
 
         chunks = []
         for chunk in self._read_data():
-            chunks.append(chunk.decode(encoding='utf-8', errors='skip'))
+            chunks.append(chunk.decode(encoding='utf-8', errors='ignore'))
         self._get_response()
         return ''.join(chunks)
 

@@ -10,6 +10,8 @@ from shlex import split
 from socket import timeout
 
 from ftp import FTP, WrongResponse
+from os import mkdir
+from queue import Queue
 
 
 def get_func(method: staticmethod):
@@ -92,13 +94,13 @@ class Client:
             Client.reconnect()
 
     @staticmethod
-    def download_file(path1, path2):
+    def download_file(remote_path, local_path):
         data_length = 0
         start = time.time()
-        for data in Client.ftp.get_file(path1):
+        for data in Client.ftp.get_file(remote_path):
             data_length += len(data)
             try:
-                with open(path2, 'ab') as file:
+                with open(local_path, 'ab') as file:
                     file.write(data)
             except:
                 Client.eprint(sys.exc_info()[1])
@@ -111,12 +113,29 @@ class Client:
         print(info_string)
 
     @staticmethod
-    def download_directory(current_path, dest_path):
-        pass
+    def download_directory(remote_path, local_path):
+        if remote_path == '.':
+            remote_path = ''
 
-    @staticmethod
-    def remove_directory(path):
-        pass
+        dirs = Queue()
+        dirs.put(remote_path)
+
+        while not dirs.empty():
+            remote_dir_path = dirs.get()
+            local_dir_path = os.path.join(local_path, remote_dir_path)
+
+            mkdir(local_dir_path)
+
+            files = Client.ftp.list_files(remote_dir_path)
+
+            for file, is_file in files:
+                remote_file_path = os.path.join(remote_dir_path, file)
+                local_file_path = os.path.join(local_path, remote_dir_path,
+                                               file)
+                if not is_file:
+                    dirs.put(remote_file_path)
+                else:
+                    Client.download_file(remote_file_path, local_file_path)
 
     @staticmethod
     def eprint(*args, **kwargs):
@@ -143,14 +162,14 @@ class Client:
         Client.setup(args)
 
     @staticmethod
-    def upload_file(path1, path2):
+    def upload_file(local_path, remote_path):
         try:
-            with open(path1, 'rb') as file:
+            with open(local_path, 'rb') as file:
                 data = file.read()
         except:
             Client.eprint(sys.exc_info()[1])
         else:
-            Client.ftp.upload_file(path2, data)
+            Client.ftp.upload_file(remote_path, data)
 
     # handlers
 
@@ -176,56 +195,27 @@ class Client:
     @get_func
     @staticmethod
     def download_handler(args):
-        """usage: get [-r] <path> [<directory_path>]
+        """usage: get [-r] <remote_path> [<local_path>]
 
         Receive file from the server. If a file already exists then it will be
         overwritten. Also you can specify the directory's path where the file
         will be downloaded. Be sure to specify directory path.
         -r: receive whole directory from the server
         """
-        if not args or (args[0] == '-r' and len(args) == 1):
-            raise ValueError
-        if args[0] == '-r':
-            path1 = args[1].rstrip('/') or '/'
-            dirname = 'ftp-server' if path1 == '/' else os.path.split(path1)[-1]
-
-            if len(args) > 2:
-                path2 = os.path.expanduser(args[2])
-            else:
-                path2 = os.path.expanduser(config['DOWNLOAD_DEFAULT_PATH'])
-            if not os.path.isdir(path2):
-                Client.eprint('"{}" is not a directory'.format(path2))
-                raise ValueError
-
-            path2 = Client.validate_path(path2.rstrip('/') + '/' + dirname)
-
-            try:
-                os.mkdir(path2)
-            except:
-                Client.eprint(sys.exc_info()[1])
-                return
-
-            # замьютим все сообщения
-            old_in, old_out = Client.ftp.print_input, Client.ftp.print_output
-            Client.ftp.print_input = False
-            Client.ftp.print_output = False
-
-            Client.download_directory(path1, path2)
-            # вернем сообщения обратно
-            Client.ftp.print_input, Client.ftp.print_output = old_in, old_out
+        if '-r' in args:
+            method = Client.download_directory
+            args = list(filter(lambda a: a != '-r', args))
         else:
-            path1 = args[0].rstrip('/')
+            method = Client.download_file
 
-            path2 = args[1] if len(args) > 1 else config['DOWNLOAD_DEFAULT_PATH']
-            path2 = os.path.expanduser(path2)
-            if not os.path.isdir(path2):
-                Client.eprint('"{}" is not a directory'.format(path2))
-                raise ValueError
-            path2 = path2.rstrip('/') + '/' + os.path.split(path1)[-1]
-            if os.path.isfile(path2):
-                os.remove(path2)
-
-            Client.download_file(path1, path2)
+        if len(args) == 0:
+            raise ValueError
+        if len(args) == 1:
+            args.append(config['DOWNLOAD_DEFAULT_PATH'])
+        args[1] = os.path.expanduser(args[1])
+        if len(args) != 2:
+            raise ValueError
+        method(*args)
 
     @get_func
     @staticmethod
@@ -246,17 +236,13 @@ class Client:
     @get_func
     @staticmethod
     def remove_handler(args):
-        """usage: rm [-r] <path>
+        """usage: rm <path>
 
         Remove file on the remote machine
-        -r: remove directory
         """
-        if not args or (args[0] == '-r' and len(args) == 1):
+        if len(args) == 0:
             raise ValueError
-        if args[0] == '-r':
-            Client.remove_directory(args[1])
-        else:
-            Client.ftp.remove_file(args[0])
+        Client.ftp.remove_file(args[0])
 
     @get_func
     @staticmethod
@@ -362,7 +348,7 @@ class Client:
         """
         if not args:
             print('Commands: ')
-            print((' ' * 4).join(filter(None, Client.handlers.keys())))
+            print((' ' * 4).join(sorted(filter(None, Client.handlers.keys()))))
         else:
             command = args[0]
             if command in Client.handlers:
