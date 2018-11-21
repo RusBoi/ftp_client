@@ -211,7 +211,10 @@ class Client:
         if len(args) == 0:
             raise ValueError
         if len(args) == 1:
-            args.append(config['DOWNLOAD_DEFAULT_PATH'])
+            new_arg = config['DOWNLOAD_DEFAULT_PATH']
+            if method == Client.download_file:
+                new_arg = os.path.join(new_arg, os.path.split(args[0])[1])
+            args.append(new_arg)
         args[1] = os.path.expanduser(args[1])
         if len(args) != 2:
             raise ValueError

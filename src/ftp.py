@@ -6,7 +6,6 @@ from response import Response
 
 
 BUFFER_SIZE = 1024 ** 2 * 20  # 20MB
-MAX_SIZE = (1024 ** 3)  # 1GB
 TIMEOUT = 60
 DATA_SOCK_TIMEOUT = 15
 
@@ -25,7 +24,7 @@ class FTP:
                  verbose_input=True, verbose_output=False):
         self.command_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.callback = callback
-        self.passive_mode = True
+        self.passive_mode = False
         self.verbose_input = verbose_input
         self.verbose_output = verbose_output
 
