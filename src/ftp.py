@@ -233,9 +233,15 @@ class FTP:
     def list_files(self, path=''):
         """Returns list of tuples (<file_name>, <is_file>)
         """
-        data = self._list_files(path)
+        data = self._list_files(path).replace('\r\n', '\n')
+        regex = re.compile(
+            r'^(?P<dir>d?)(?:.+)(?:(?<= \d{4} )|(?<= \d{2}:\d{2} ))(?P<filename>.+)$',
+            re.MULTILINE)
 
         result = []
-        for line in filter(None, data.split('\r\n')):
-            result.append((line.split()[-1], line[0] == '-'))
+        for match in regex.finditer(data):
+            is_file = match.group('dir') == ''
+            filename = match.group('filename')
+            result.append((filename, is_file))
+
         return result

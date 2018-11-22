@@ -12,7 +12,8 @@
 ## Консольный FTP-клиент
 
 ```
-$ python client.py host [-h] [--port PORT] [--user USER] [--passwd PASSWD] [--debug] {put,upload,get,download,ls} ...
+$ python client.py [-h] [--port PORT] [--login LOGIN] [--verbose]
+                 host {put,get,ls} ...
 ```
 
 ### Ключи
