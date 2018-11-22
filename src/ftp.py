@@ -30,6 +30,10 @@ class FTP:
 
         self._resp_regex = re.compile(
             r'^(?P<code>\d+?)(?P<delimeter> |-)(?P<message>.+)$')
+        self._files_regex = re.compile(
+            (r'^(?P<dir>d?)(?:.+)(?:(?<= \d{4} )|(?<= \d{2}:\d{2} ))'
+             r'(?P<filename>.+)$'),
+            re.MULTILINE)
 
         self.command_socket.settimeout(TIMEOUT)
         self.command_socket.connect((host, port))
@@ -234,12 +238,9 @@ class FTP:
         """Returns list of tuples (<file_name>, <is_file>)
         """
         data = self._list_files(path).replace('\r\n', '\n')
-        regex = re.compile(
-            r'^(?P<dir>d?)(?:.+)(?:(?<= \d{4} )|(?<= \d{2}:\d{2} ))(?P<filename>.+)$',
-            re.MULTILINE)
 
         result = []
-        for match in regex.finditer(data):
+        for match in self._files_regex.finditer(data):
             is_file = match.group('dir') == ''
             filename = match.group('filename')
             result.append((filename, is_file))

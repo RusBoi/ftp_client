@@ -92,6 +92,8 @@ class Client:
             print(sys.exc_info()[1])
             print('Trying to reconnect')
             Client.reconnect()
+        except:
+            print(sys.exc_info()[1])
 
     @staticmethod
     def download_file(remote_path, local_path):
