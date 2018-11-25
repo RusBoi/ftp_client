@@ -35,7 +35,7 @@ $ python client.py [-h] [--port PORT] [--login LOGIN] [--verbose]
 Для получения более детальной справки по командам-ключам пользуйтесь данной конструкцией:
 
 ```
-$ cs src
+$ cd src
 $ python client.py ... <command> --help
 ```
 
