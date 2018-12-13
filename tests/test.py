@@ -2,8 +2,8 @@ import unittest
 from time import sleep
 from unittest.mock import Mock, patch
 
-from src.ftp import FTP, WrongResponse
-from src.response import Response
+from ftp.ftp import FTP, WrongResponse
+from ftp.response import Response
 
 
 def list_of_bytes(s):
@@ -98,7 +98,7 @@ drw-rw-r--   1 ftp      ftp       8245331 Dec 11  2007 11-Byvshiy podjesaul (1-y
             mock = Mock()
             data_mock.accept.return_value = (mock,)
             mock.recv.side_effect = (b'#' for i in range(file_size))
-            self.ftp.data_socket = data_mock
+            self.ftp._data_socket = data_mock
 
             actual = b''.join(self.ftp.get_file('test-file.txt'))
             self.assertEqual(actual, b'#' * file_size)
@@ -124,7 +124,7 @@ drw-rw-r--   1 ftp      ftp       8245331 Dec 11  2007 11-Byvshiy podjesaul (1-y
             mock = Mock()
             data_mock.accept.return_value = (mock,)
             mock.recv.side_effect = self.return_byte_with_delay(file_size, 5)
-            self.ftp.data_socket = data_mock
+            self.ftp._data_socket = data_mock
 
             actual = b''.join(self.ftp.get_file('test-file.txt'))
             self.assertEqual(actual, b'#' * file_size)

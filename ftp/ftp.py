@@ -1,13 +1,18 @@
 import re
 import socket
 
-from mode import Mode
-from response import Response
+from .mode import Mode
+from .response import Response
 
 
 BUFFER_SIZE = 1024 ** 2 * 20  # 20MB
 TIMEOUT = 60
 DATA_SOCK_TIMEOUT = 15
+RESP_REGEX = re.compile(r'^(?P<code>\d+?)(?P<delimeter> |-)(?P<message>.+)$')
+FILE_REGEX = re.compile(
+    (r'^(?P<dir>d?)(?:.+)(?:(?<= \d{4} )|(?<= \d{2}:\d{2} ))'
+     r'(?P<filename>.+)$'),
+    re.MULTILINE)
 
 
 class Error(Exception):
@@ -22,32 +27,26 @@ class WrongResponse(Error):
 class FTP:
     def __init__(self, host, port, callback=print,
                  verbose_input=True, verbose_output=False):
-        self.command_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.callback = callback
         self.passive_mode = False
         self.verbose_input = verbose_input
         self.verbose_output = verbose_output
 
-        self._resp_regex = re.compile(
-            r'^(?P<code>\d+?)(?P<delimeter> |-)(?P<message>.+)$')
-        self._files_regex = re.compile(
-            (r'^(?P<dir>d?)(?:.+)(?:(?<= \d{4} )|(?<= \d{2}:\d{2} ))'
-             r'(?P<filename>.+)$'),
-            re.MULTILINE)
-
-        self.command_socket.settimeout(TIMEOUT)
-        self.command_socket.connect((host, port))
+        self._command_socket = socket.socket(socket.AF_INET,
+                                             socket.SOCK_STREAM)
+        self._command_socket.settimeout(TIMEOUT)
+        self._command_socket.connect((host, port))
         self._get_response()
 
     def _close_connection(self):
-        self.command_socket.close()
+        self._command_socket.close()
 
     def _read_line(self):
         """Read from the command socket
         """
         res = bytearray()
         while True:
-            byte = self.command_socket.recv(1)
+            byte = self._command_socket.recv(1)
             if byte in (b'\n', b''):
                 break
             res += byte
@@ -59,7 +58,7 @@ class FTP:
         lines = []
         while True:
             line = self._read_line()
-            match = self._resp_regex.fullmatch(line)
+            match = RESP_REGEX.fullmatch(line)
             if match is None:
                 lines.append(line)
             else:
@@ -70,16 +69,16 @@ class FTP:
     def _send_message(self, message):
         """Send message to the server.
         """
-        self.command_socket.sendall((message + '\r\n').encode('utf-8'))
+        self._command_socket.sendall((message + '\r\n').encode('utf-8'))
 
     def _open_data_connection(self):
         """Open connection to retrieve and send data to the server.
         Connection can be open in two modes: passive and active
         (depending on "passive_mode" flag)
         """
-        self.data_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.data_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.data_socket.settimeout(DATA_SOCK_TIMEOUT)
+        self._data_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._data_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._data_socket.settimeout(DATA_SOCK_TIMEOUT)
 
         if self.passive_mode:
             regex = re.compile(r'\((\d+,\d+,\d+,\d+),(\d+),(\d+)\)')
@@ -89,7 +88,7 @@ class FTP:
                 raise WrongResponse(res)
             ip = ''.join(map(lambda x: '.' if x == ',' else x, match.group(1)))
             port = 256 * int(match.group(2)) + int(match.group(3))
-            self.data_socket.connect((ip, port))
+            self._data_socket.connect((ip, port))
         else:
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             s.connect(("google.com", 80))
@@ -100,9 +99,10 @@ class FTP:
 
             self.run_command(
                 'PORT',
-                f'{local_ip},{local_port // 256},{local_port % 256}')
-            self.data_socket.bind(('', local_port))
-            self.data_socket.listen(100)
+                '{},{},{}'.format(
+                    local_ip, local_port // 256, local_port % 256))
+            self._data_socket.bind(('', local_port))
+            self._data_socket.listen(100)
 
     def _read_data(self, data_size=None, buffer_size=BUFFER_SIZE,
                    show_progress=False):
@@ -111,9 +111,9 @@ class FTP:
         """
         downloaded_size = 0
         if self.passive_mode:
-            sock = self.data_socket
+            sock = self._data_socket
         else:
-            sock = self.data_socket.accept()[0]
+            sock = self._data_socket.accept()[0]
             sock.settimeout(DATA_SOCK_TIMEOUT)
 
         while True:
@@ -122,7 +122,8 @@ class FTP:
             yield chunk
             if show_progress:
                 if data_size is None:
-                    print(f'{downloaded_size // 1024 >> 10}MB', end='\r')
+                    print('{}MB'.format(downloaded_size // 1024 >> 10),
+                          end='\r')
                 else:
                     percents = str(round(downloaded_size / data_size * 100))
                     print(percents + '%', end='\r')
@@ -133,9 +134,9 @@ class FTP:
         """Send data via data connection socket
         """
         if self.passive_mode:
-            conn = self.data_socket
+            conn = self._data_socket
         else:
-            conn, _ = self.data_socket.accept()
+            conn, _ = self._data_socket.accept()
         conn.sendall(bytes)
         conn.close()
 
@@ -159,13 +160,13 @@ class FTP:
                 if command == 'PASS':
                     self.callback('>> PASS XXXX')
                 else:
-                    self.callback(f'>> {message}')
+                    self.callback('>> {}'.format(message))
 
         result = self._get_response()
         if not result.success:
             raise WrongResponse(result)
         if printin:
-            self.callback(f'<< {result}')
+            self.callback('<< {}'.format(result))
         return result
 
     def login(self, user, password):
@@ -240,7 +241,7 @@ class FTP:
         data = self._list_files(path).replace('\r\n', '\n')
 
         result = []
-        for match in self._files_regex.finditer(data):
+        for match in FILE_REGEX.finditer(data):
             is_file = match.group('dir') == ''
             filename = match.group('filename')
             result.append((filename, is_file))

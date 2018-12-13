@@ -9,15 +9,14 @@
 
 Требования:
 
-+ `python3.6+`
-+ `nosetests` для запуска тестов (`nosetests tests/`)
++ `python3.5+`
++ `pytest` для запуска тестов
 
 ## Консольный FTP-клиент
 
 ```
-$ cd src
-$ python client.py [-h] [--port PORT] [--login LOGIN] [--verbose]
-                 host {put,get,ls} ...
+$ python main.py [-h] [--port PORT] [--login LOGIN] [--verbose]
+               host {put,get,ls} ...
 ```
 
 ### Ключи
@@ -38,8 +37,7 @@ $ python client.py [-h] [--port PORT] [--login LOGIN] [--verbose]
 Для получения более детальной справки по командам-ключам пользуйтесь данной конструкцией:
 
 ```
-$ cd src
-$ python client.py ... <command> --help
+$ python main.py ... <command> --help
 ```
 
 ## Команды клиента:

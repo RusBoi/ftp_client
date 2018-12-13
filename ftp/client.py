@@ -5,13 +5,13 @@ import os.path
 import readline
 import sys
 import time
-from parser import Parser
+from os import mkdir
+from queue import Queue
 from shlex import split
 from socket import timeout
 
-from ftp import FTP, WrongResponse
-from os import mkdir
-from queue import Queue
+from .ftp import FTP, WrongResponse
+from .parser import Parser
 
 
 def get_func(method: staticmethod):
@@ -92,6 +92,8 @@ class Client:
             print(sys.exc_info()[1])
             print('Trying to reconnect')
             Client.reconnect()
+        except SystemExit:
+            raise
         except:
             print(sys.exc_info()[1])
 
@@ -110,8 +112,8 @@ class Client:
 
         result_time = time.time() - start
         speed = round(data_length / (1024 ** 2) / result_time, 4)
-        info_string = (f'{data_length} bytes received in '
-                       f'{round(result_time, 2)} secs ({speed} MB/s)')
+        info_string = '{} bytes received in {} secs ({} MB/s)'.format(
+            data_length, round(result_time, 2), speed)
         print(info_string)
 
     @staticmethod
@@ -235,7 +237,7 @@ class Client:
         file_name = os.path.split(args[0])[-1]
         path2 = args[1] if len(args) > 1 else './'
         path2 = path2.rstrip('/')
-        path2 = os.path.normpath(f'{path2}/{file_name}')
+        path2 = os.path.normpath(os.path.join(path2, file_name))
         Client.upload_file(args[0], path2)
 
     @get_func
@@ -361,7 +363,7 @@ class Client:
                 for line in doc_lines:
                     print(line.strip())
             else:
-                print(f'Unknown command "{command}".')
+                print('Unknown command "{}".'.format(command))
 
     @get_func
     @staticmethod
@@ -369,7 +371,7 @@ class Client:
         """Terminate ftp session
         """
         Client.ftp.quit()
-        raise SystemExit
+        raise SystemExit(0)
 
     @get_func
     @staticmethod
@@ -395,9 +397,3 @@ class Client:
         'exit': exit_handler,
         None: unknown_command_handler
     }
-
-
-if __name__ == '__main__':
-    args = Parser.parse_arguments()
-    Client.setup(args)
-    Client.run()
