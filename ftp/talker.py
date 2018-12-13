@@ -1,34 +1,22 @@
 import re
 import socket
+from typing import Generator
 
-from .mode import Mode
+from .errors import WrongResponse
 from .response import Response
-
 
 BUFFER_SIZE = 1024 ** 2 * 20  # 20MB
 TIMEOUT = 60
 DATA_SOCK_TIMEOUT = 15
 RESP_REGEX = re.compile(r'^(?P<code>\d+?)(?P<delimeter> |-)(?P<message>.+)$')
-FILE_REGEX = re.compile(
-    (r'^(?P<dir>d?)(?:.+)(?:(?<= \d{4} )|(?<= \d{2}:\d{2} ))'
-     r'(?P<filename>.+)$'),
-    re.MULTILINE)
 
 
-class Error(Exception):
-    pass
+class Talker:
+    def __init__(self, host, port, callback=print, verbose_input=True,
+                 verbose_output=False):
+        self.passive_mode = False  # type: bool
 
-
-class WrongResponse(Error):
-    def __init__(self, response):
-        self.response = response
-
-
-class FTP:
-    def __init__(self, host, port, callback=print,
-                 verbose_input=True, verbose_output=False):
         self.callback = callback
-        self.passive_mode = False
         self.verbose_input = verbose_input
         self.verbose_output = verbose_output
 
@@ -36,12 +24,11 @@ class FTP:
                                              socket.SOCK_STREAM)
         self._command_socket.settimeout(TIMEOUT)
         self._command_socket.connect((host, port))
-        self._get_response()
 
-    def _close_connection(self):
+    def close_connection(self):
         self._command_socket.close()
 
-    def _read_line(self):
+    def _read_line(self) -> str:
         """Read from the command socket
         """
         res = bytearray()
@@ -52,7 +39,7 @@ class FTP:
             res += byte
         return res[:-1].decode(errors='ignore')
 
-    def _get_response(self):
+    def _get_response(self) -> Response:
         """Get response from the server.
         """
         lines = []
@@ -66,7 +53,7 @@ class FTP:
                 if match.group('delimeter') == ' ':
                     return Response(int(match.group('code')), '\n'.join(lines))
 
-    def _send_message(self, message):
+    def _send_message(self, message: str):
         """Send message to the server.
         """
         self._command_socket.sendall((message + '\r\n').encode('utf-8'))
@@ -105,7 +92,7 @@ class FTP:
             self._data_socket.listen(100)
 
     def _read_data(self, data_size=None, buffer_size=BUFFER_SIZE,
-                   show_progress=False):
+                   show_progress=False) -> Generator[bytes, None, None]:
         """Get data from data connection socket. The amount of data can't be
         bigger than MAX_SIZE
         """
@@ -130,17 +117,18 @@ class FTP:
             if chunk == b'':
                 break
 
-    def _send_data(self, bytes):
+    def _send_data(self, data: bytes):
         """Send data via data connection socket
         """
         if self.passive_mode:
             conn = self._data_socket
         else:
             conn, _ = self._data_socket.accept()
-        conn.sendall(bytes)
+        conn.sendall(data)
         conn.close()
 
-    def run_command(self, command, *args, printin=None, printout=None):
+    def run_command(self, command: str, *args, printin=None,
+                    printout=None) -> Response:
         """Send command to the server and get response. If response is bad than
         WrongResponse exception is raised. If there is no exception than print
         the response to the console.
@@ -167,83 +155,4 @@ class FTP:
             raise WrongResponse(result)
         if printin:
             self.callback('<< {}'.format(result))
-        return result
-
-    def login(self, user, password):
-        self.run_command('USER', user)
-        self.run_command('PASS', password)
-
-    def quit(self):
-        self.run_command("QUIT")
-        self._close_connection()
-
-    def switch_mode(self, mode: Mode):
-        self.run_command('TYPE', mode.value[0])
-
-    def get_file(self, path):
-        try:
-            resp = self.get_size(path)
-            file_size = int(resp)
-        except ValueError:
-            file_size = None
-
-        self.switch_mode(Mode.Binary)
-        self._open_data_connection()
-        self.run_command('RETR', path)
-        yield from self._read_data(file_size, show_progress=True)
-        self._get_response()
-
-    def upload_file(self, path, data):
-        self.switch_mode(Mode.Binary)
-        self._open_data_connection()
-        self.run_command('STOR', path)
-        self._send_data(data)
-        self._get_response()
-
-    def get_current_location(self):
-        return self.run_command('PWD').message
-
-    def remove_file(self, path):
-        self.run_command('DELE', path)
-
-    def rename_file(self, old_name, new_name):
-        self.run_command('RNFR', old_name)
-        self.run_command('RNTO', new_name)
-
-    def get_size(self, path):
-        self.switch_mode(Mode.Binary)
-        result = self.run_command('SIZE', path).message
-        self.switch_mode(Mode.Ascii)
-        return result
-
-    def remove_directory(self, path):
-        self.run_command('RMD', path)
-
-    def change_directory(self, path):
-        self.run_command('CWD', path)
-
-    def make_directory(self, path):
-        self.run_command('MKD', path)
-
-    def _list_files(self, path=''):
-        self._open_data_connection()
-        self.run_command('LIST', path)
-
-        chunks = []
-        for chunk in self._read_data():
-            chunks.append(chunk.decode(encoding='utf-8', errors='ignore'))
-        self._get_response()
-        return ''.join(chunks)
-
-    def list_files(self, path=''):
-        """Returns list of tuples (<file_name>, <is_file>)
-        """
-        data = self._list_files(path).replace('\r\n', '\n')
-
-        result = []
-        for match in FILE_REGEX.finditer(data):
-            is_file = match.group('dir') == ''
-            filename = match.group('filename')
-            result.append((filename, is_file))
-
         return result

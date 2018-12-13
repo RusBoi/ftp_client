@@ -1,5 +1,5 @@
 class Response:
-    def __init__(self, code, message):
+    def __init__(self, code: int, message: str):
         self.code = code
         self.message = message
         self.success = self.code // 100 in [1, 2, 3]

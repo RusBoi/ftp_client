@@ -10,11 +10,13 @@ from queue import Queue
 from shlex import split
 from socket import timeout
 
-from .ftp import FTP, WrongResponse
+from .errors import WrongResponse
+from .ftp_api import FtpApi
 from .parser import Parser
+from .talker import Talker
 
 
-def get_func(method: staticmethod):
+def get_func(method):
     @functools.wraps(method.__func__)
     def wrapper(args):
         return method.__func__(args)
@@ -29,17 +31,18 @@ TIMEOUT_CODE = 421
 
 
 class Client:
-    ftp = None
+    # ftp = None
 
     @staticmethod
     def setup(arguments):
         try:
-            Client.ftp = FTP(
+            talker = Talker(
                 arguments.host, arguments.port, callback=print,
                 verbose_output=arguments.verbose)
         except KeyboardInterrupt:
-            raise SystemExit
+            raise SystemExit(0)
 
+        Client.ftp = FtpApi(talker)
         if arguments.login is not None:
             username, password = arguments.login.split(':')
             Client.ftp.login(username, password)
@@ -53,7 +56,7 @@ class Client:
                 a = [arguments.path1, arguments.path2]
 
             Client.run_command(arguments.func, a)
-            raise SystemExit
+            raise SystemExit(0)
 
     @staticmethod
     def run():
@@ -148,19 +151,6 @@ class Client:
         print(*args, file=sys.stderr, **kwargs)
 
     @staticmethod
-    def validate_path(path):
-        """Return available directory's path by adding '*' symbol to the end
-        :param path: initial path
-        :return: validated path
-        """
-        while True:
-            if os.path.isdir(path):
-                path += '*'
-            else:
-                break
-        return path
-
-    @staticmethod
     def reconnect():
         args = Parser.parse_arguments()
         Client.setup(args)
@@ -236,7 +226,6 @@ class Client:
             raise ValueError
         file_name = os.path.split(args[0])[-1]
         path2 = args[1] if len(args) > 1 else './'
-        path2 = path2.rstrip('/')
         path2 = os.path.normpath(os.path.join(path2, file_name))
         Client.upload_file(args[0], path2)
 
@@ -300,7 +289,7 @@ class Client:
         Show content of remote directory
         -l: show content in list form
         """
-        method = (Client.ftp._list_files
+        method = (Client.ftp.list_files_raw
                   if '-l' in args
                   else Client.ftp.list_files)
         args = list(filter(lambda a: a != '-l', args))
@@ -321,16 +310,16 @@ class Client:
         """
         if not args:
             raise ValueError
-        Client.ftp.get_size(args[0])
+        Client.ftp.try_get_size(args[0])
 
     @get_func
     @staticmethod
     def verbose_handler(args):
         """Toggle debugging mode
         """
-        Client.ftp.verbose_output = not Client.ftp.verbose_output
+        Client.ftp.talker.verbose_output = not Client.ftp.talker.verbose_output
         message = ('Verbose is on'
-                   if Client.ftp.verbose_output
+                   if Client.ftp.talker.verbose_output
                    else 'Verbose is off')
         print(message)
 
@@ -339,9 +328,9 @@ class Client:
     def switch_mode_handler(args):
         """Enter passive or active transfer mode
         """
-        Client.ftp.passive_mode = not Client.ftp.passive_mode
+        Client.ftp.talker.passive_mode = not Client.ftp.talker.passive_mode
         message = ('Passive mode is on'
-                   if Client.ftp.passive_mode
+                   if Client.ftp.talker.passive_mode
                    else 'Active mode is on')
         print(message)
 
