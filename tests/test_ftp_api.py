@@ -120,7 +120,7 @@ class FtpTest(unittest.TestCase):
         with mock.patch.object(Talker, '_open_data_connection',
                                return_value=None):
             with mock.patch.object(Talker, '_read_data') as data_mock:
-                data_mock.return_value = (b'x' for i in range(file_size))
+                data_mock.return_value = (b'x' for _ in range(file_size))
 
                 actual = b''.join(self.api.get_file('file.txt'))
                 self.assertEqual(len(actual), file_size)
